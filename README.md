@@ -1,5 +1,5 @@
 # Mini Drifter
-Code for our Senior Design project. The mini drifter is a solar powered smart buoy designed to operate 
+Code for our Senior Design project. The mini drifter is a solar powered smart buoy designed to survive a year with minimal maintenence 
 
 ## Code conventions
 ### Function prefixes
