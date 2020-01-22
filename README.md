@@ -31,4 +31,4 @@ void epaper_doTheThing() {
 ```
 
 ## Organization of functions
-the first function in the file should be arduino's setup() function, followed by main, then the componenent specific functions (which should be grouped together by component).
+The first function in the file should be arduino's setup() function, followed by loop(), then the componenent specific functions (which should be grouped together by component).
