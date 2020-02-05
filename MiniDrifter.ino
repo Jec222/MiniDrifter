@@ -2,6 +2,8 @@
 #include <SD.h>
 #include "Adafruit_EPD.h"
 #include <OneWire.h>
+#include <Adafruit_LIS3DH.h>
+#include <Adafruit_Sensor.h>
 #include <Wire.h> //For i2c with k1.0
 #include <DallasTemperature.h>
 
@@ -43,8 +45,19 @@ String serialInput;
 
 uint8_t i;
 
+//Accelerometer
+Adafruit_LIS3DH accelerometer = Adafruit_LIS3DH();
+#define I2C_ADDRESS_ACCELEROMETER 0x18 // change this to 0x19 for alternative i2c address
+#define ACCELEROMETER_RANGE LIS3DH_RANGE_4_G  // 2, 4, 8 or 16 G!
+typedef struct AccelerometerReading {
+  float x;
+  float y;
+  float z;
+};
+
 float intTempF;
 float extTempF;
+bool drifterNotUpright;
 
 // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 OneWire oneWire(ONE_WIRE_BUS);
@@ -68,6 +81,7 @@ void setup() {
 
   sd_setup();
   temp_setup();
+  accelerometer_setup();
   k1_setup();
   epaper_setup();
   
@@ -78,17 +92,31 @@ void loop() {
   // put your main code here, to run repeatedly:
   delay (200);
   
-  // call sensors.requestTemperatures() to issue a global temperature 
+ 
+
+  AccelerometerReading accel = accelerometer_read();
+  drifterNotUpright = accel.z < 0;
+  
+  if (drifterNotUpright) {
+    /* Drifter is not upright, don't take samples */
+  } else {
+   // call sensors.requestTemperatures() to issue a global temperature 
   // request to all devices on the bus
   Serial.print("Requesting OneWire temperatures...");
   sensors.requestTemperatures(); // Send the command to get temperatures
   Serial.println("DONE");
   
   // It responds almost immediately. Let's print out the data
-//  temp_printTemperature(insideThermometer); // Use a simple function to print out the data
-//  temp_printTemperature(externalThermometer);
+  //  temp_printTemperature(insideThermometer); // Use a simple function to print out the data
+  //  temp_printTemperature(externalThermometer);
 
-  temp_readTemperatures();
+  temp_readTemperatures(); 
+  }
+  
+  k1_debug_serial_update();
+
+  epaper_update();
+
   Serial.print(i);
   Serial.println("Writing to files...");
   logFile.print(i);
@@ -97,11 +125,8 @@ void loop() {
   errorFile.println("errors...");
   logFile.flush();
   errorFile.flush();
-  i++;
-
-  k1_debug_serial_update();
-
-  epaper_update();
+  i++; 
+  
   delay(15*1000);
 }
 
@@ -134,22 +159,32 @@ void epaper_update() {
     epd.clearBuffer();
     epd.setCursor(10, 10);
     epd.setTextColor(EPD_BLACK);
-    epd.print("MiniDrifter 0.01");
-    epd.print("\nInt: ");
-    epd.print(intTempF);
-    epd.print("\nExt: ");
-    epd.print(extTempF);
-    epd.print("\nTDS: ");
-    epd.print(0);
-    epd.print("\nCon: ");
-    epd.print(0);
-    epd.print("\nSal: ");
-    epd.print(0);
-    epd.print("\n");
-    epd.print(i);
-    epd.print(" samples taken");
-    epd.display();
-
+    if (drifterNotUpright) {
+      epd.print("Not upright");
+      epd.print("\nInt: ");
+      epd.print(intTempF);
+      epd.print("\nExt: NA");
+      epd.print("\nTDS: NA");
+      epd.print("\nCon: NA");
+      epd.print("\nSal: NA");
+      epd.print("\n");
+    } else {
+      epd.print("MiniDrifter 0.01");
+      epd.print("\nInt: ");
+      epd.print(intTempF);
+      epd.print("\nExt: ");
+      epd.print(extTempF);
+      epd.print("\nTDS: ");
+      epd.print(tds);
+      epd.print("\nCon: ");
+      epd.print(ec);
+      epd.print("\nSal: ");
+      epd.print(sal);
+      epd.print("\n");
+      epd.print(i);
+      epd.print(" samples taken");
+    }
+      epd.display();
 }
 
 void temp_setup() {
@@ -344,4 +379,36 @@ void k1_debug_read_serial_input() {
       serialInput += inChar;
     }
   }
+}
+
+void accelerometer_setup() {
+  Serial.println("LIS3DH setup...");
+  
+  if (!accelerometer.begin(I2C_ADDRESS_ACCELEROMETER)) {
+    Serial.println("Couldnt start");
+    while (1) yield();
+  }
+  
+  Serial.println("LIS3DH found!");
+  
+  accelerometer.setRange(ACCELEROMETER_RANGE);
+
+  Serial.print("Range = "); Serial.print(2 << accelerometer.getRange());  
+  Serial.println("G");
+}
+
+AccelerometerReading accelerometer_read() {
+  sensors_event_t event;
+  accelerometer.getEvent(&event);
+
+   /* Display the results (acceleration is measured in m/s^2) */
+  Serial.print("\t\tX: "); Serial.print(event.acceleration.x);
+  Serial.print(" \tY: "); Serial.print(event.acceleration.y); 
+  Serial.print(" \tZ: "); Serial.print(event.acceleration.z); 
+  Serial.println(" m/s^2 ");
+
+  Serial.println();
+  AccelerometerReading reading = {event.acceleration.x, event.acceleration.y, event.acceleration.z};
+
+  return reading;
 }
