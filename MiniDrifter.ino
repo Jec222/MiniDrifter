@@ -6,6 +6,38 @@
 #include <Adafruit_Sensor.h>
 #include <Wire.h> //For i2c with k1.0
 #include <DallasTemperature.h>
+#include <RTCZero.h>
+
+#define PIN_LED_RED 13 // Red LED on Pin #13
+#define PIN_LED_GREEN 8 // Green LED on Pin #8
+#define PIN_VOLTAGE_BATT A7    // Battery Voltage on Pin A7
+#define SAMPLE_INTERVAL_SECONDS 0 // RTC - Sample interval in seconds
+#define SAMPLE_INTERVAL_MINUTES 1
+
+const int SampleIntSeconds = 500;   //Simple Delay used for testing, ms i.e. 1000 = 1 sec
+
+// Time info for RTC
+const byte hours = 8;
+const byte minutes = 20;
+const byte seconds = 0;
+
+// Date info for RTC
+const byte day = 25;
+const byte month = 1;
+const byte year = 20;
+
+typedef struct Timestamp {
+  byte hours;
+  byte minutes;
+  byte seconds;
+  byte day;
+  byte month;
+  byte year;  
+} Timestamp;
+
+RTCZero rtc;
+int nextAlarmTimeMinutes;
+int nextAlarmTimeSeconds;
 
 // Data wire is plugged into port 2 on the Arduino
 #define ONE_WIRE_BUS 12
@@ -27,7 +59,7 @@ File errorFile;
 
 const int LOG_DECIMAL_DIGITS = 8;
 const int NUM_SAMPLES = 5;
-const int TIMESTAMP_SIZE = 8;
+const int TIMESTAMP_SIZE = 8 + strlen("-XX::XX");
 const int LOG_DATA_STRING_SIZE = (LOG_DECIMAL_DIGITS * 5) + TIMESTAMP_SIZE + NUM_SAMPLES;
 char logLine[LOG_DATA_STRING_SIZE] = "";
 
@@ -37,14 +69,16 @@ char logLine[LOG_DATA_STRING_SIZE] = "";
 struct SystemErrors {
   bool noSdDetected;
   bool drifterInverted;
-}
+};
 
-SystemErrors systemErrors = {false, false};s
+struct SystemErrors systemErrors = {false, false};
 
 const char logFileName[15] = "/DATA.CSV";
 const char errorFileName[15] = "/ERRORS.TXT";
 
-const char *READ_COMMAND = "R";
+#define READ_COMMAND "R"
+#define SLEEP_COMMAND "sleep"
+
 
 //K1.0 stuff
 #define K1_ADDRESS 100              //default I2C ID number for EZO EC Circuit.
@@ -75,7 +109,6 @@ typedef struct AccelerometerReading {
 
 float intTempF;
 float extTempF;
-bool drifterNotUpright;
 
 // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 OneWire oneWire(ONE_WIRE_BUS);
@@ -93,10 +126,21 @@ Adafruit_SSD1675 epd(250, 122, EPD_DC, EPD_RESET, EPD_CS, SRAM_CS, EPD_BUSY);
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
-  while (!Serial) {delay(50);};
+  delay(4000);
   Serial.println("\nMini Drifter version 0.0000000001");
-  pinMode(13, OUTPUT);
 
+  pinMode(PIN_LED_RED, OUTPUT);
+  pinMode(PIN_LED_GREEN, OUTPUT);
+
+  Timestamp initialTime;
+  initialTime.hours = 4;
+  initialTime.minutes = 38;
+  initialTime.seconds = 0;
+  initialTime.day = 3;
+  initialTime.month = 2;
+  initialTime.year = 20;
+
+  rtc_setup(initialTime);
   sd_setup();
   temp_setup();
   accelerometer_setup();
@@ -104,34 +148,118 @@ void setup() {
   epaper_setup();
 
   i = 0;
+  k1_sleep();
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
   delay (200);
-
-
-
+  blink(PIN_LED_GREEN, 2);
+  rtc_debug_serial_print();
+  rtc_enterDeepSleep();
+  
   AccelerometerReading accel = accelerometer_read();
+  systemErrors.drifterInverted = accel.z < 0;
+    
   if (systemErrors.drifterInverted) {
     /* Drifter is not upright, don't take samples */
   // request to all devices on the bus
-  Serial.println("DONE");
+  } else {
 
-  // It responds almost immediately. Let's print out the data
-  //  temp_printTemperature(insideThermometer); // Use a simple function to print out the data
-  //  temp_printTemperature(externalThermometer);
-
-  k1_takeMeasurement();
-  sd_logData();
+    Serial.println("Taking measurements...");
+    temp_readTemperatures();
+    k1_wake();
+    k1_takeMeasurement();
+    k1_sleep();
+    sd_logData();
   }
   
 
   drifter_handleSystemErrors();
-
+  epaper_update();
   i++; 
   
-  delay(15*1000);
+  delay(3*1000);
+}
+
+void rtc_setup(Timestamp initialTime) {
+  rtc.begin();
+  rtc.setTime(initialTime.hours, initialTime.minutes, initialTime.seconds);
+  rtc.setDate(initialTime.day, initialTime.month, initialTime.year);
+  nextAlarmTimeMinutes = initialTime.minutes;
+  nextAlarmTimeSeconds = initialTime.seconds;
+}
+
+void rtc_enterDeepSleep() {
+  // Interval Timing and Sleep Code
+  delay(200);   // just for debugging
+
+  // It's not like a delay, setting the seconds to next alarm means that when the seconds in the real time clock matches the number we set here, 
+  // the alarm goes off. This is why you have to make nextAlarmTimeSeconds be a funciton of itself. The next alarm time is not relative to
+  // current time, its absolute.
+  nextAlarmTimeMinutes = (nextAlarmTimeMinutes + SAMPLE_INTERVAL_MINUTES) % 60;
+  nextAlarmTimeMinutes = rtc.getMinutes();
+  nextAlarmTimeSeconds = rtc.getSeconds() + 8;
+  rtc.setAlarmSeconds(nextAlarmTimeSeconds);
+  Serial.println("Next alarm time minutes");
+  Serial.println(nextAlarmTimeMinutes);
+  delay(100);
+  rtc.setAlarmMinutes(nextAlarmTimeMinutes); // RTC time to wake, currently seconds only
+  rtc.enableAlarm(rtc.MATCH_MMSS); // Match seconds only
+  rtc.attachInterrupt(alarmMatch); // Attaches function to be called, currently blank
+  delay(50); // Brief delay prior to sleeping not really sure its required
+
+  Serial.println("Entering deep sleep..");
+  delay(100);
+  rtc.standbyMode();    // Sleep until next alarm match
+  Serial.println("Read");
+  delay(100);
+  // Code re-starts here after sleep !
+}
+
+void alarmMatch() {}
+
+void rtc_debug_serial_print() {
+  Serial.print(rtc.getDay());
+  delay(100);
+  Serial.print("/");
+    delay(100);
+  Serial.print(rtc.getMonth());
+    delay(100);
+  Serial.print("/");
+    delay(100);
+  Serial.print(rtc.getYear()+2000);
+    delay(100);
+  Serial.print(" ");
+    delay(100);
+  Serial.print(rtc.getHours());
+    delay(100);
+  Serial.print(":");
+    delay(100);
+  if(rtc.getMinutes() < 10)
+    Serial.print('0');      // Trick to add leading zero for formatting
+  Serial.print(rtc.getMinutes());
+    delay(100);
+  Serial.print(":");
+    delay(100);
+  if(rtc.getSeconds() < 10)
+    Serial.print('0');      // Trick to add leading zero for formatting
+  Serial.print(rtc.getSeconds());
+    delay(100);
+  Serial.print(",");
+    delay(100);
+//  Serial.println(BatteryVoltage());   // Print battery voltage  
+}
+
+// blink out an error code, Red on pin #13 or Green on pin #8
+void blink(uint8_t LED, uint8_t flashes) {
+  uint8_t i;
+  for (i=0; i<flashes; i++) {
+    digitalWrite(LED, HIGH);
+    delay(100);
+    digitalWrite(LED, LOW);
+    delay(200);
+  }
 }
 
 void sd_setup() {
@@ -154,7 +282,7 @@ void sd_setup() {
 
   if (logFileEmpty) {
     /* File didn't previously exist, print header at top */
-    sprintf(logLine, "yy-mm-dd,Int,Ext,Tds,Sal,Con\n");
+    sprintf(logLine, "yy-mm-dd-HH:MM,Int,Ext,Tds,Sal,Con\n");
     logFile.write(logLine);
   }
 
@@ -162,11 +290,12 @@ void sd_setup() {
 }
 
 void sd_logData() {
-  sprintf(logLine, "%d-%d-%d,%.2f,%.2f,%.2f,%.2f,%.2f\n", /*month*/-1, /*day*/-1, /*year*/-1, intTemp, extTemp, tds, sal, con);
-  logFile.write(logLine);  
+  sprintf(logLine, "%d-%d-%d-%d:%d,%.2f,%.2f,%.2f,%.2f,%.2f\n", /*month*/-1, /*day*/-1, /*year*/-1, /*hours*/21, /*min*/ 21, intTempF, extTempF, tds, sal, ec);
+  logFile.write(logLine);
   for (int i = 0; i < LOG_DATA_STRING_SIZE; i++) {
     logLine[i] = '\0';
   }
+  logFile.flush();
 }
 
 void drifter_handleSystemErrors() {
@@ -197,7 +326,7 @@ void epaper_update() {
     epd.clearBuffer();
     epd.setCursor(10, 10);
     epd.setTextColor(EPD_BLACK);
-    if (drifterNotUpright) {
+    if (systemErrors.drifterInverted) {
       epd.print("Not upright");
       epd.print("\nInt: ");
       epd.print(intTempF);
@@ -240,15 +369,6 @@ void temp_setup() {
   if (sensors.isParasitePowerMode()) Serial.println("ON");
   else Serial.println("OFF");
 
-  // show the addresses we found on the bus
-  Serial.print("Internal temp address: ");
-  temp_printAddress(insideThermometer);
-  Serial.println();
-
-   Serial.print("External temp address: ");
-  temp_printAddress(externalThermometer);
-  Serial.println();
-
   // set the resolution to 9 bit (Each Dallas/Maxim device is capable of several different resolutions)
   sensors.setResolution(insideThermometer, 9);
 
@@ -262,6 +382,7 @@ void temp_setup() {
 }
 
 void temp_readTemperatures() {
+  sensors.requestTemperatures();
   float tempC = sensors.getTempC(insideThermometer);
   intTempF = DallasTemperature::toFahrenheit(tempC);
 
@@ -269,107 +390,8 @@ void temp_readTemperatures() {
   extTempF = DallasTemperature::toFahrenheit(tempC);
 }
 
-void temp_printTemperature(DeviceAddress deviceAddress) {
-  float tempC = sensors.getTempC(deviceAddress);
-  Serial.print("[Int] ");
-  Serial.print("Temp C: ");
-  Serial.print(tempC);
-  Serial.print(" Temp F: ");
-  intTempF = DallasTemperature::toFahrenheit(tempC);
-  Serial.println(intTempF); // Converts tempC to Fahrenheit
-
-  tempC = sensors.getTempC(deviceAddress);
-  Serial.print("[Int] ");
-  Serial.print("Temp C: ");
-  Serial.print(tempC);
-  Serial.print(" Temp F: ");
-  extTempF = DallasTemperature::toFahrenheit(tempC);
-  Serial.println(intTempF); // Converts tempC to Fahrenheit
-}
-
-void temp_printAddress(DeviceAddress deviceAddress)
-{
-  for (uint8_t i = 0; i < 8; i++)
-  {
-    if (deviceAddress[i] < 16) Serial.print("0");
-    Serial.print(deviceAddress[i], HEX);
-  }
-}
-
 void k1_setup() {
   Wire.begin();
-}
-
-void k1_debug_serial_update() {
-  k1_debug_read_serial_input();
-
-  if (serialInputComplete) {                                                     //if a command was sent to the EZO device.
-    for (i = 0; i <= serialInput.length(); i++) {                               //set all char to lower case, this is just so this exact sample code can recognize the "sleep" command.
-      serialInput[i] = tolower(serialInput[i]);                                 //"Sleep" ≠ "sleep"
-    }
-    i=0;                                                                          //reset i, we will need it later
-    if (serialInput[0] == 'c' || serialInput[0] == 'r') {
-      k1DelayTime = 570;
-    }           //if a command has been sent to calibrate or take a reading we wait 570ms so that the circuit has time to take the reading.
-    else {
-      k1DelayTime = 250;
-    }                                                          //if any other command has been sent we wait only 250ms.
-
-
-
-    Wire.beginTransmission(K1_ADDRESS);                                            //call the circuit by its ID number.
-    Wire.write(serialInput.c_str());                                                   //transmit the command that was sent through the serial port.
-    Wire.endTransmission();                                                     //end the I2C data transmission.
-
-
-    if (strcmp(serialInput.c_str(), "sleep") != 0) {                                   //if the command that has been sent is NOT the sleep command, wait the correct amount of time and request data.
-                                                                                //if it is the sleep command, we do nothing. Issuing a sleep command and then requesting data will wake the EC circuit.
-      delay(k1DelayTime);                                                             //wait the correct amount of time for the circuit to complete its instruction.
-
-      Wire.requestFrom(K1_ADDRESS, 32, 1);                                         //call the circuit and request 32 bytes (this could be too small, but it is the max i2c buffer size for an Arduino)
-      k1ReturnCode = Wire.read();                                                       //the first byte is the response code, we read this separately.
-
-      switch (k1ReturnCode) {                           //switch case based on what the response code is.
-        case 1:                                 //decimal 1.
-          Serial.println("Success");            //means the command was successful.
-          break;                                //exits the switch case.
-
-        case 2:                                 //decimal 2.
-          Serial.println("Failed");             //means the command has failed.
-          break;                                //exits the switch case.
-
-        case 254:                               //decimal 254.
-          Serial.println("Pending");            //means the command has not yet been finished calculating.
-          break;                                //exits the switch case.
-
-        case 255:                               //decimal 255.
-          Serial.println("No Data");            //means there is no further data to send.
-          break;                                //exits the switch case.
-
-      }
-
-      while (Wire.available()) {                 //are there bytes to receive.
-        k1InChar = Wire.read();                   //receive a byte.
-        k1Data[i] = k1InChar;                    //load this byte into our array.
-        i += 1;                                  //incur the counter for the array element.
-        if (k1InChar == 0) {                      //if we see that we have been sent a null command.
-          i = 0;                                 //reset the counter i to 0.
-          Wire.endTransmission();                //end the I2C data transmission.
-          break;                                 //exit the while loop.
-        }
-      }
-
-      Serial.println(k1Data);                  //print the data.
-      Serial.println();                         //this just makes the output easier to read by adding an extra blank line
-    }
-    if (serialInput[0] == 'r') k1_debug_serial_parse_data(); //uncomment this function if you would like to break up the comma separated string into its individual parts.
-
-
-    serialInput = "";
-    serialInputComplete = false;
-
-  } // end of that first if
-  delay(200);
 }
 
 void k1_debug_serial_parse_data() {
@@ -401,22 +423,6 @@ void k1_debug_serial_parse_data() {
     sal_float=atof(sal);
     sg_float=atof(sg);
 */
-}
-
-void k1_debug_read_serial_input() {
-  while (Serial.available()) {
-    // get the new byte:
-    char inChar = (char)Serial.read();
-    // add it to the inputString:
-
-    // if the incoming character is a newline, set a flag so the main loop can
-    // do something about it:
-    if (inChar == '\n') {
-      serialInputComplete = true;
-    } else {
-      serialInput += inChar;
-    }
-  }
 }
 
 void accelerometer_setup() {
@@ -451,11 +457,13 @@ AccelerometerReading accelerometer_read() {
   return reading;
 }
 
-void K1_takeMeasurement() {
-
-
+void k1_takeMeasurement() {
   k1DelayTime = 570;                        //Delay to allow the K1 to take a reading.
   Wire.beginTransmission(K1_ADDRESS);       //call the circuit by its ID number.
+  Wire.write(READ_COMMAND);
+  Wire.endTransmission();
+
+  delay(k1DelayTime);
 
   Wire.requestFrom(K1_ADDRESS, 32, 1);      //call the circuit and request 32 bytes (this could be too small, but it is the max i2c buffer size for an Arduino)
   k1ReturnCode = Wire.read();               //the first byte is the response code, we read this separately.
@@ -496,14 +504,17 @@ void K1_takeMeasurement() {
   delay(200);
 }
 
-void K1_SDPrint(){
-  logFile.print("EC:");
-  logFile.println(ec);
-  logFile.print("TDS:");
-  logFile.println(tds);
-  logFile.print("SAL:");
-  logFile.println(sal);
-  logFile.print("SG:");
-  logFile.println(sg);
-  logFile.println();
+void k1_sleep(){
+  k1DelayTime = 250;
+  
+  Wire.beginTransmission(K1_ADDRESS);                                            //call the circuit by its ID number.
+  Wire.write(SLEEP_COMMAND);                                                   //transmit the command that was sent through the serial port.
+  Wire.endTransmission();
+
+}
+
+void k1_wake(){                     //any request should be enough to wake the k1 as per the example
+  Wire.requestFrom(K1_ADDRESS, 32, 1);        //we shouldn't actually need a wake command
+  k1ReturnCode = Wire.read();
+  Serial.println(k1ReturnCode);
 }
