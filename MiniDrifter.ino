@@ -412,3 +412,16 @@ AccelerometerReading accelerometer_read() {
 
   return reading;
 }
+
+void sd_setup() {
+  if (drifterNotExitingLowPowerMode) {
+    // Then this is the initial boot up sequence, need to format sd card.
+    sprintf(logLine, "yy-mm-dd,Int,Ext,Tds,Sal,Con\n");
+    logFile.write(logLine);
+  }
+}
+
+void sd_logData() {
+  sprintf(logLine, "%d-%d-%d,%.2f,%.2f,%.2f,%.2f,%.2f", month, day, year, intTemp, extTemp, tds, sal, con);
+  logFile.write(logLine);  
+}
