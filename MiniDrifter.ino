@@ -25,6 +25,22 @@
 File logFile;
 File errorFile;
 
+const int LOG_DECIMAL_DIGITS = 8;
+const int NUM_SAMPLES = 5;
+const int TIMESTAMP_SIZE = 8;
+const int LOG_DATA_STRING_SIZE = (LOG_DECIMAL_DIGITS * 5) + TIMESTAMP_SIZE + NUM_SAMPLES;
+char logLine[LOG_DATA_STRING_SIZE] = "";
+
+#define ERROR_MESSAGE_DRIFTER_INVERTED "Drifter was inverted, samples weren't taken."
+#define ERROR_MESSAGE_NO_SD "No sd card was detected, couldn't log measurements."
+
+struct SystemErrors {
+  bool noSdDetected;
+  bool drifterInverted;
+}
+
+SystemErrors systemErrors = {false, false};s
+
 const char logFileName[15] = "/DATA.CSV";
 const char errorFileName[15] = "/ERRORS.TXT";
 
@@ -95,9 +111,9 @@ void loop() {
  
 
   AccelerometerReading accel = accelerometer_read();
-  drifterNotUpright = accel.z < 0;
+  systemErrors.drifterInverted = accel.z < 0;
   
-  if (drifterNotUpright) {
+  if (systemErrors.drifterInverted) {
     /* Drifter is not upright, don't take samples */
   } else {
    // call sensors.requestTemperatures() to issue a global temperature 
@@ -111,20 +127,17 @@ void loop() {
   //  temp_printTemperature(externalThermometer);
 
   temp_readTemperatures(); 
+  k1_debug_serial_update();
+  sd_logData();
   }
   
-  k1_debug_serial_update();
+
+  drifter_handleSystemErrors();
 
   epaper_update();
 
   Serial.print(i);
   Serial.println("Writing to files...");
-  logFile.print(i);
-  logFile.println("data.....");
-  errorFile.print(i);
-  errorFile.println("errors...");
-  logFile.flush();
-  errorFile.flush();
   i++; 
   
   delay(15*1000);
@@ -136,6 +149,8 @@ void sd_setup() {
     Serial.println("Couldn't initialize SD card");
   }
 
+  bool logFileEmpty = !SD.exists(logFileName);
+
   logFile = SD.open(logFileName, FILE_WRITE);
   errorFile = SD.open(errorFileName, FILE_WRITE);
 
@@ -145,6 +160,38 @@ void sd_setup() {
   if (!errorFile) {
     Serial.println("Couldn't open error file");
   }
+
+  if (logFileEmpty) {
+    /* File didn't previously exist, print header at top */
+    sprintf(logLine, "yy-mm-dd,Int,Ext,Tds,Sal,Con\n");
+    logFile.write(logLine);
+  }
+
+  logFile.flush();
+}
+
+void sd_logData() {
+  sprintf(logLine, "%d-%d-%d,%.2f,%.2f,%.2f,%.2f,%.2f\n", /*month*/-1, /*day*/-1, /*year*/-1, intTemp, extTemp, tds, sal, con);
+  logFile.write(logLine);  
+  for (int i = 0; i < LOG_DATA_STRING_SIZE; i++) {
+    logLine[i] = '\0';
+  }
+}
+
+void drifter_handleSystemErrors() {
+  if (systemErrors.noSdDetected) {
+    errorFile.write("PUT_DATE_HERE ");
+    errorFile.write(ERROR_MESSAGE_NO_SD);
+    errorFile.write("\n");
+  }
+
+  if (systemErrors.drifterInverted) {
+    errorFile.write("PUT_DATE_HERE ");
+    errorFile.write(ERROR_MESSAGE_DRIFTER_INVERTED);
+    errorFile.write("\n");
+  }
+
+  errorFile.flush();
 }
 
 void epaper_setup() {
@@ -411,17 +458,4 @@ AccelerometerReading accelerometer_read() {
   AccelerometerReading reading = {event.acceleration.x, event.acceleration.y, event.acceleration.z};
 
   return reading;
-}
-
-void sd_setup() {
-  if (drifterNotExitingLowPowerMode) {
-    // Then this is the initial boot up sequence, need to format sd card.
-    sprintf(logLine, "yy-mm-dd,Int,Ext,Tds,Sal,Con\n");
-    logFile.write(logLine);
-  }
-}
-
-void sd_logData() {
-  sprintf(logLine, "%d-%d-%d,%.2f,%.2f,%.2f,%.2f,%.2f", month, day, year, intTemp, extTemp, tds, sal, con);
-  logFile.write(logLine);  
 }
