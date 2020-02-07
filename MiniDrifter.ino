@@ -19,7 +19,7 @@
 #define SD_CS       5
 #define SRAM_CS     6
 #define EPD_CS      9
-#define EPD_DC      10  
+#define EPD_DC      10
 
 //Files on SD card
 File logFile;
@@ -43,6 +43,8 @@ SystemErrors systemErrors = {false, false};s
 
 const char logFileName[15] = "/DATA.CSV";
 const char errorFileName[15] = "/ERRORS.TXT";
+
+const char *READ_COMMAND = "R";
 
 //K1.0 stuff
 #define K1_ADDRESS 100              //default I2C ID number for EZO EC Circuit.
@@ -78,7 +80,7 @@ bool drifterNotUpright;
 // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 OneWire oneWire(ONE_WIRE_BUS);
 
-// Pass our oneWire reference to Dallas Temperature. 
+// Pass our oneWire reference to Dallas Temperature.
 DallasTemperature sensors(&oneWire);
 
 // arrays to hold device address
@@ -100,44 +102,33 @@ void setup() {
   accelerometer_setup();
   k1_setup();
   epaper_setup();
-  
+
   i = 0;
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
   delay (200);
-  
- 
+
+
 
   AccelerometerReading accel = accelerometer_read();
-  systemErrors.drifterInverted = accel.z < 0;
-  
   if (systemErrors.drifterInverted) {
     /* Drifter is not upright, don't take samples */
-  } else {
-   // call sensors.requestTemperatures() to issue a global temperature 
   // request to all devices on the bus
-  Serial.print("Requesting OneWire temperatures...");
-  sensors.requestTemperatures(); // Send the command to get temperatures
   Serial.println("DONE");
-  
+
   // It responds almost immediately. Let's print out the data
   //  temp_printTemperature(insideThermometer); // Use a simple function to print out the data
   //  temp_printTemperature(externalThermometer);
 
-  temp_readTemperatures(); 
-  k1_debug_serial_update();
+  k1_takeMeasurement();
   sd_logData();
   }
   
 
   drifter_handleSystemErrors();
 
-  epaper_update();
-
-  Serial.print(i);
-  Serial.println("Writing to files...");
   i++; 
   
   delay(15*1000);
@@ -245,7 +236,7 @@ void temp_setup() {
   Serial.println(" devices.");
 
   // report parasite power requirements
-  Serial.print("Parasite power is: "); 
+  Serial.print("Parasite power is: ");
   if (sensors.isParasitePowerMode()) Serial.println("ON");
   else Serial.println("OFF");
 
@@ -260,13 +251,13 @@ void temp_setup() {
 
   // set the resolution to 9 bit (Each Dallas/Maxim device is capable of several different resolutions)
   sensors.setResolution(insideThermometer, 9);
- 
+
   Serial.print("Internal temp Resolution: ");
-  Serial.print(sensors.getResolution(insideThermometer), DEC); 
+  Serial.print(sensors.getResolution(insideThermometer), DEC);
   Serial.println();
 
    Serial.print("External temp Resolution: ");
-  Serial.print(sensors.getResolution(externalThermometer), DEC); 
+  Serial.print(sensors.getResolution(externalThermometer), DEC);
   Serial.println();
 }
 
@@ -311,13 +302,13 @@ void k1_setup() {
 
 void k1_debug_serial_update() {
   k1_debug_read_serial_input();
-  
+
   if (serialInputComplete) {                                                     //if a command was sent to the EZO device.
     for (i = 0; i <= serialInput.length(); i++) {                               //set all char to lower case, this is just so this exact sample code can recognize the "sleep" command.
       serialInput[i] = tolower(serialInput[i]);                                 //"Sleep" ≠ "sleep"
     }
-    i=0;                                                                          //reset i, we will need it later 
-    if (serialInput[0] == 'c' || serialInput[0] == 'r') { 
+    i=0;                                                                          //reset i, we will need it later
+    if (serialInput[0] == 'c' || serialInput[0] == 'r') {
       k1DelayTime = 570;
     }           //if a command has been sent to calibrate or take a reading we wait 570ms so that the circuit has time to take the reading.
     else {
@@ -326,8 +317,8 @@ void k1_debug_serial_update() {
 
 
 
-    Wire.beginTransmission(K1_ADDRESS);                                            //call the circuit by its ID number.    
-    Wire.write(serialInput.c_str());                                                   //transmit the command that was sent through the serial port.    
+    Wire.beginTransmission(K1_ADDRESS);                                            //call the circuit by its ID number.
+    Wire.write(serialInput.c_str());                                                   //transmit the command that was sent through the serial port.
     Wire.endTransmission();                                                     //end the I2C data transmission.
 
 
@@ -369,12 +360,12 @@ void k1_debug_serial_update() {
       }
 
       Serial.println(k1Data);                  //print the data.
-      Serial.println();                         //this just makes the output easier to read by adding an extra blank line 
+      Serial.println();                         //this just makes the output easier to read by adding an extra blank line
     }
     if (serialInput[0] == 'r') k1_debug_serial_parse_data(); //uncomment this function if you would like to break up the comma separated string into its individual parts.
 
 
-    serialInput = "";    
+    serialInput = "";
     serialInputComplete = false;
 
   } // end of that first if
@@ -401,15 +392,15 @@ void k1_debug_serial_parse_data() {
 
   Serial.print("SG:");               //we now print each value we parsed separately.
   Serial.println(sg);                //this is the specific gravity.
-  Serial.println();                  //this just makes the output easier to read by adding an extra blank line 
-    
+  Serial.println();                  //this just makes the output easier to read by adding an extra blank line
+
   //uncomment this section if you want to take the values and convert them into floating point number.
-/*  
+/*
     ec_float=atof(ec);
     tds_float=atof(tds);
     sal_float=atof(sal);
     sg_float=atof(sg);
-*/  
+*/
 }
 
 void k1_debug_read_serial_input() {
@@ -417,7 +408,7 @@ void k1_debug_read_serial_input() {
     // get the new byte:
     char inChar = (char)Serial.read();
     // add it to the inputString:
-    
+
     // if the incoming character is a newline, set a flag so the main loop can
     // do something about it:
     if (inChar == '\n') {
@@ -430,17 +421,17 @@ void k1_debug_read_serial_input() {
 
 void accelerometer_setup() {
   Serial.println("LIS3DH setup...");
-  
+
   if (!accelerometer.begin(I2C_ADDRESS_ACCELEROMETER)) {
     Serial.println("Couldnt start");
     while (1) yield();
   }
-  
+
   Serial.println("LIS3DH found!");
-  
+
   accelerometer.setRange(ACCELEROMETER_RANGE);
 
-  Serial.print("Range = "); Serial.print(2 << accelerometer.getRange());  
+  Serial.print("Range = "); Serial.print(2 << accelerometer.getRange());
   Serial.println("G");
 }
 
@@ -450,12 +441,69 @@ AccelerometerReading accelerometer_read() {
 
    /* Display the results (acceleration is measured in m/s^2) */
   Serial.print("\t\tX: "); Serial.print(event.acceleration.x);
-  Serial.print(" \tY: "); Serial.print(event.acceleration.y); 
-  Serial.print(" \tZ: "); Serial.print(event.acceleration.z); 
+  Serial.print(" \tY: "); Serial.print(event.acceleration.y);
+  Serial.print(" \tZ: "); Serial.print(event.acceleration.z);
   Serial.println(" m/s^2 ");
 
   Serial.println();
   AccelerometerReading reading = {event.acceleration.x, event.acceleration.y, event.acceleration.z};
 
   return reading;
+}
+
+void K1_takeMeasurement() {
+
+
+  k1DelayTime = 570;                        //Delay to allow the K1 to take a reading.
+  Wire.beginTransmission(K1_ADDRESS);       //call the circuit by its ID number.
+
+  Wire.requestFrom(K1_ADDRESS, 32, 1);      //call the circuit and request 32 bytes (this could be too small, but it is the max i2c buffer size for an Arduino)
+  k1ReturnCode = Wire.read();               //the first byte is the response code, we read this separately.
+
+      switch (k1ReturnCode) {                           //switch case based on what the response code is.
+        case 1:                                 //decimal 1.
+          Serial.println("Success");            //means the command was successful.
+          break;                                //exits the switch case.
+
+        case 2:                                 //decimal 2.
+          Serial.println("Failed");             //means the command has failed.
+          break;                                //exits the switch case.
+
+        case 254:                               //decimal 254.
+          Serial.println("Pending");            //means the command has not yet been finished calculating.
+          break;                                //exits the switch case.
+
+        case 255:                               //decimal 255.
+          Serial.println("No Data");            //means there is no further data to send.
+          break;                                //exits the switch case.
+
+      }
+
+  i=0;
+  while (Wire.available()) {                 //are there bytes to receive.
+    k1InChar = Wire.read();                  //receive a byte.
+    k1Data[i] = k1InChar;                    //load this byte into our array.
+    i += 1;                                  //incur the counter for the array element.
+    if (k1InChar == 0) {                     //if we see that we have been sent a null command.
+      i = 0;                                 //reset the counter i to 0.
+      Wire.endTransmission();                //end the I2C data transmission.
+      break;                                 //exit the while loop.
+    }
+  }
+
+   k1_debug_serial_parse_data();
+
+  delay(200);
+}
+
+void K1_SDPrint(){
+  logFile.print("EC:");
+  logFile.println(ec);
+  logFile.print("TDS:");
+  logFile.println(tds);
+  logFile.print("SAL:");
+  logFile.println(sal);
+  logFile.print("SG:");
+  logFile.println(sg);
+  logFile.println();
 }
