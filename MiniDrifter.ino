@@ -10,6 +10,7 @@
 
 #define PIN_LED_RED 13 // Red LED on Pin #13
 #define PIN_LED_GREEN 8 // Green LED on Pin #8
+#define PIN_LED_STATUS 11
 #define PIN_VOLTAGE_BATT A7    // Battery Voltage on Pin A7
 #define SAMPLE_INTERVAL_SECONDS 0 // RTC - Sample interval in seconds
 #define SAMPLE_INTERVAL_MINUTES 1
@@ -131,6 +132,7 @@ void setup() {
 
   pinMode(PIN_LED_RED, OUTPUT);
   pinMode(PIN_LED_GREEN, OUTPUT);
+  pinMode(PIN_LED_STATUS, OUTPUT);
 
   Timestamp initialTime;
   initialTime.hours = 4;
@@ -155,6 +157,7 @@ void loop() {
   // put your main code here, to run repeatedly:
   delay (200);
   blink(PIN_LED_GREEN, 2);
+  blink(PIN_LED_STATUS, 4);
   rtc_debug_serial_print();
   rtc_enterDeepSleep();
   
@@ -163,7 +166,6 @@ void loop() {
     
   if (systemErrors.drifterInverted) {
     /* Drifter is not upright, don't take samples */
-  // request to all devices on the bus
   } else {
 
     Serial.println("Taking measurements...");
@@ -290,7 +292,7 @@ void sd_setup() {
 }
 
 void sd_logData() {
-  sprintf(logLine, "%d-%d-%d-%d:%d,%.2f,%.2f,%.2f,%.2f,%.2f\n", /*month*/-1, /*day*/-1, /*year*/-1, /*hours*/21, /*min*/ 21, intTempF, extTempF, tds, sal, ec);
+  sprintf(logLine, "%d-%d-%d-%d:%d,%.2f,%.2f,%.2f,%.2f,%.2f\n", /*month*/rtc.getMonth(), /*day*/rtc.getDay(), /*year*/rtc.getYear(), /*hours*/rtc.getHours(), /*min*/ rtc.getMinutes(), intTempF, extTempF, tds, sal, ec);
   logFile.write(logLine);
   for (int i = 0; i < LOG_DATA_STRING_SIZE; i++) {
     logLine[i] = '\0';
@@ -376,7 +378,7 @@ void temp_setup() {
   Serial.print(sensors.getResolution(insideThermometer), DEC);
   Serial.println();
 
-   Serial.print("External temp Resolution: ");
+  Serial.print("External temp Resolution: ");
   Serial.print(sensors.getResolution(externalThermometer), DEC);
   Serial.println();
 }
