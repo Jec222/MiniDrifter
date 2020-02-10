@@ -33,7 +33,7 @@ typedef struct Timestamp {
   byte seconds;
   byte day;
   byte month;
-  byte year;  
+  byte year;
 } Timestamp;
 
 RTCZero rtc;
@@ -91,12 +91,19 @@ char *ec;                        //char pointer used in string parsing.
 char *tds;                       //char pointer used in string parsing.
 char *sal;                       //char pointer used in string parsing.
 char *sg;                        //char pointer used in string parsing.
+float ec_float;
+float tds_float;
+float sal_float;
+float sg_float;
+bool k1_retry;
 
 //For serial input (Serial doesn't work with sleep/wake mode enabled)
 bool serialInputComplete;
 String serialInput;
 
 uint8_t i;
+uint8_t j;
+
 
 //Accelerometer
 Adafruit_LIS3DH accelerometer = Adafruit_LIS3DH();
@@ -149,7 +156,9 @@ void setup() {
   k1_setup();
   epaper_setup();
 
+  k1_retry = false;
   i = 0;
+  j = 0;
   k1_sleep();
 }
 
@@ -160,27 +169,25 @@ void loop() {
   blink(PIN_LED_STATUS, 4);
   rtc_debug_serial_print();
   rtc_enterDeepSleep();
-  
+
   AccelerometerReading accel = accelerometer_read();
   systemErrors.drifterInverted = accel.z < 0;
-    
+
   if (systemErrors.drifterInverted) {
     /* Drifter is not upright, don't take samples */
   } else {
 
     Serial.println("Taking measurements...");
     temp_readTemperatures();
-    k1_wake();
-    k1_takeMeasurement();
-    k1_sleep();
+    k1_handle_measurement();
     sd_logData();
   }
-  
+
 
   drifter_handleSystemErrors();
   epaper_update();
-  i++; 
-  
+  i++;
+  j++;
   delay(3*1000);
 }
 
@@ -196,7 +203,7 @@ void rtc_enterDeepSleep() {
   // Interval Timing and Sleep Code
   delay(200);   // just for debugging
 
-  // It's not like a delay, setting the seconds to next alarm means that when the seconds in the real time clock matches the number we set here, 
+  // It's not like a delay, setting the seconds to next alarm means that when the seconds in the real time clock matches the number we set here,
   // the alarm goes off. This is why you have to make nextAlarmTimeSeconds be a funciton of itself. The next alarm time is not relative to
   // current time, its absolute.
   nextAlarmTimeMinutes = (nextAlarmTimeMinutes + SAMPLE_INTERVAL_MINUTES) % 60;
@@ -250,7 +257,7 @@ void rtc_debug_serial_print() {
     delay(100);
   Serial.print(",");
     delay(100);
-//  Serial.println(BatteryVoltage());   // Print battery voltage  
+//  Serial.println(BatteryVoltage());   // Print battery voltage
 }
 
 // blink out an error code, Red on pin #13 or Green on pin #8
@@ -292,7 +299,11 @@ void sd_setup() {
 }
 
 void sd_logData() {
+<<<<<<< .merge_file_ORfwOn
   sprintf(logLine, "%d-%d-%d-%d:%d,%.2f,%.2f,%.2f,%.2f,%.2f\n", /*month*/rtc.getMonth(), /*day*/rtc.getDay(), /*year*/rtc.getYear(), /*hours*/rtc.getHours(), /*min*/ rtc.getMinutes(), intTempF, extTempF, tds, sal, ec);
+=======
+  sprintf(logLine, "%d-%d-%d-%d:%d,%.2f,%.2f,%.2f,%.2f,%.2f\n", /*month*/-1, /*day*/-1, /*year*/-1, /*hours*/21, /*min*/ 21, intTempF, extTempF, tds_float, sal_float, ec_float);
+>>>>>>> .merge_file_M6ZV5w
   logFile.write(logLine);
   for (int i = 0; i < LOG_DATA_STRING_SIZE; i++) {
     logLine[i] = '\0';
@@ -323,7 +334,6 @@ void epaper_setup() {
   epd.setTextSize(2);
 }
 
-
 void epaper_update() {
     epd.clearBuffer();
     epd.setCursor(10, 10);
@@ -344,13 +354,13 @@ void epaper_update() {
       epd.print("\nExt: ");
       epd.print(extTempF);
       epd.print("\nTDS: ");
-      epd.print(tds);
+      epd.print(tds_float);
       epd.print("\nCon: ");
-      epd.print(ec);
+      epd.print(ec_float);
       epd.print("\nSal: ");
-      epd.print(sal);
+      epd.print(sal_float);
       epd.print("\n");
-      epd.print(i);
+      epd.print(j);
       epd.print(" samples taken");
     }
       epd.display();
@@ -392,41 +402,6 @@ void temp_readTemperatures() {
   extTempF = DallasTemperature::toFahrenheit(tempC);
 }
 
-void k1_setup() {
-  Wire.begin();
-}
-
-void k1_debug_serial_parse_data() {
-  //this function will break up the CSV string into its 4 individual parts. EC|TDS|SAL|SG.
-                                      //this is done using the C command “strtok”.
-
-  ec = strtok(k1Data, ",");          //let's pars the string at each comma.
-  tds = strtok(NULL, ",");            //let's pars the string at each comma.
-  sal = strtok(NULL, ",");            //let's pars the string at each comma.
-  sg = strtok(NULL, ",");             //let's pars the string at each comma.
-
-  Serial.print("EC:");                //we now print each value we parsed separately.
-  Serial.println(ec);                 //this is the EC value.
-
-  Serial.print("TDS:");               //we now print each value we parsed separately.
-  Serial.println(tds);                //this is the TDS value.
-
-  Serial.print("SAL:");               //we now print each value we parsed separately.
-  Serial.println(sal);                //this is the salinity value.
-
-  Serial.print("SG:");               //we now print each value we parsed separately.
-  Serial.println(sg);                //this is the specific gravity.
-  Serial.println();                  //this just makes the output easier to read by adding an extra blank line
-
-  //uncomment this section if you want to take the values and convert them into floating point number.
-/*
-    ec_float=atof(ec);
-    tds_float=atof(tds);
-    sal_float=atof(sal);
-    sg_float=atof(sg);
-*/
-}
-
 void accelerometer_setup() {
   Serial.println("LIS3DH setup...");
 
@@ -459,6 +434,10 @@ AccelerometerReading accelerometer_read() {
   return reading;
 }
 
+void k1_setup() {
+  Wire.begin();
+}
+
 void k1_takeMeasurement() {
   k1DelayTime = 570;                        //Delay to allow the K1 to take a reading.
   Wire.beginTransmission(K1_ADDRESS);       //call the circuit by its ID number.
@@ -470,24 +449,7 @@ void k1_takeMeasurement() {
   Wire.requestFrom(K1_ADDRESS, 32, 1);      //call the circuit and request 32 bytes (this could be too small, but it is the max i2c buffer size for an Arduino)
   k1ReturnCode = Wire.read();               //the first byte is the response code, we read this separately.
 
-      switch (k1ReturnCode) {                           //switch case based on what the response code is.
-        case 1:                                 //decimal 1.
-          Serial.println("Success");            //means the command was successful.
-          break;                                //exits the switch case.
 
-        case 2:                                 //decimal 2.
-          Serial.println("Failed");             //means the command has failed.
-          break;                                //exits the switch case.
-
-        case 254:                               //decimal 254.
-          Serial.println("Pending");            //means the command has not yet been finished calculating.
-          break;                                //exits the switch case.
-
-        case 255:                               //decimal 255.
-          Serial.println("No Data");            //means there is no further data to send.
-          break;                                //exits the switch case.
-
-      }
 
   i=0;
   while (Wire.available()) {                 //are there bytes to receive.
@@ -501,22 +463,115 @@ void k1_takeMeasurement() {
     }
   }
 
-   k1_debug_serial_parse_data();
+   k1_parse_data();
 
   delay(200);
 }
 
+void k1_parse_data() {
+  //this function will break up the CSV string into its 4 individual parts. EC|TDS|SAL|SG.
+                                      //this is done using the C command “strtok”.
+
+  ec = strtok(k1Data, ",");          //let's pars the string at each comma.
+  tds = strtok(NULL, ",");            //let's pars the string at each comma.
+  sal = strtok(NULL, ",");            //let's pars the string at each comma.
+  sg = strtok(NULL, ",");             //let's pars the string at each comma.
+
+  //uncomment this section if you want to take the values and convert them into floating point number.
+
+    ec_float=atof(ec);
+    tds_float=atof(tds);
+    sal_float=atof(sal);
+    sg_float=atof(sg);
+
+}
+
 void k1_sleep(){
   k1DelayTime = 250;
-  
+
   Wire.beginTransmission(K1_ADDRESS);                                            //call the circuit by its ID number.
   Wire.write(SLEEP_COMMAND);                                                   //transmit the command that was sent through the serial port.
   Wire.endTransmission();
 
 }
 
-void k1_wake(){                     //any request should be enough to wake the k1 as per the example
+void k1_wake(){
   Wire.requestFrom(K1_ADDRESS, 32, 1);        //we shouldn't actually need a wake command
-  k1ReturnCode = Wire.read();
+  k1ReturnCode = Wire.read();                  //any request should be enough to wake the k1 as per the example
   Serial.println(k1ReturnCode);
+}
+
+//Want this function to do all the waking, taking, sleep. And in addition check the k1ReturnCode
+//for success,failure,no data, or god forbid pending. (that'd be our fault)
+//Then check the actual measurements and test them against our SoW requirements and check that they are within range.
+void k1_handle_measurement(){
+
+  k1_wake();
+  k1_takeMeasurement();
+
+
+  switch (k1ReturnCode) {
+                                              //switch case based on what the response code is.
+      case 1:                                 //decimal 1.
+        //Serial.println("Success");            //means the command was successful.
+        break;                                //exits the switch case.
+  
+      case 2:                                 //decimal 2.
+        //Serial.println("Failed");             //means the command has failed.
+        k1_takeMeasurement();
+        errorFile.write("Error: K1 code 2, Command has failed, trying again");
+        if(k1ReturnCode = 2){
+          errorFile.write("Error: K1 code 2, Command has failed");
+        }
+        break;                                //exits the switch case.
+  
+      case 254:                               //decimal 254.
+        //Serial.println("Pending");            //means the command has not yet been finished calculating.
+        errorFile.write("Error: K1 code 254, Command failed to process in given delay.");
+        break;                                //exits the switch case.
+  
+      case 255:                               //decimal 255.
+        //Serial.println("No Data");            //means there is no further data to send.
+        errorFile.write("Error: K1 code 255, No data received, command did not reach K1.0");
+        break;                                //exits the switch case.
+    }
+
+  if(ec_float < 5 || ec_float > 100000){
+      errorFile.write("\nError: K1 Conductivity Out of Bounds. Resampling!");
+      ec_float = -1;
+      k1_retry = true;
+    }
+    if(tds_float < 2 || tds_float > 50000){
+      errorFile.write("\nError: K1 TDS Out of Bounds. Resampling!");
+      tds_float = -1;
+      k1_retry = true;
+    }
+    if(sal_float < 0.01 || sal_float > 35){
+      errorFile.write("\nError: K1 Salinity Out of Bounds. Resampling!");
+      sal_float = -1;
+      k1_retry = true;
+    }
+
+  if(k1_retry) {
+    k1_takeMeasurement();
+    if(k1ReturnCode = 1){
+      if(ec_float < 5 || ec_float > 100000){
+        errorFile.write("\nError: K1 Conductivity Out of Bounds");
+        ec_float = -1;
+      }
+      if(tds_float < 2 || tds_float > 50000){
+        errorFile.write("\nError: K1 TDS Out of Bounds");
+        tds_float = -1;
+      }
+      if(sal_float < 0.01 || sal_float > 35){
+        errorFile.write("\nError: K1 Salinity Out of Bounds");
+        sal_float = -1;
+      }
+    }
+  }
+  k1_retry = false;
+
+
+
+  k1_sleep();
 }
