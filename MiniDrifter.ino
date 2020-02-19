@@ -10,7 +10,10 @@
 
 #define PIN_LED_RED 13 // Red LED on Pin #13
 #define PIN_LED_GREEN 8 // Green LED on Pin #8
-#define PIN_VOLTAGE_BATT A7    // Battery Voltage on Pin A7
+#define PIN_LED_STATUS 11
+//#define PIN_VOLTAGE_BATT_BACKUP A7    // Battery Voltage on Pin A7
+#define PIN_VOLTAGE_BATT 14    // Main Battery Voltage on Pin A0 (14 ide)
+#define PIN_VOLTAGE_BATT_CIRC_ENABLE 11 //Enable pin for batt reading circuit
 #define SAMPLE_INTERVAL_SECONDS 0 // RTC - Sample interval in seconds
 #define SAMPLE_INTERVAL_MINUTES 1
 
@@ -38,12 +41,10 @@ typedef struct Timestamp {
 RTCZero rtc;
 int nextAlarmTimeMinutes;
 int nextAlarmTimeSeconds;
+char currentDateAndTime[] = "mm/dd/yy-HH:MM";
 
-// Data wire is plugged into port 2 on the Arduino
-#define ONE_WIRE_BUS 12
-
-// Sets pins for SD
-#define cardSelect 4
+#define ONE_WIRE_BUS 12 // Data wire is plugged into port 2 on the Arduino
+#define cardSelect 4    //Pin for SD card
 
 //Sets pins for ePaper display
 #define EPD_RESET   -1 // can set to -1 and share with microcontroller Reset!
@@ -60,7 +61,7 @@ File errorFile;
 const int LOG_DECIMAL_DIGITS = 8;
 const int NUM_SAMPLES = 5;
 const int TIMESTAMP_SIZE = 8 + strlen("-XX::XX");
-const int LOG_DATA_STRING_SIZE = (LOG_DECIMAL_DIGITS * 5) + TIMESTAMP_SIZE + NUM_SAMPLES;
+const int LOG_DATA_STRING_SIZE = (LOG_DECIMAL_DIGITS * 5) + TIMESTAMP_SIZE + NUM_SAMPLES + 4;
 char logLine[LOG_DATA_STRING_SIZE] = "";
 
 #define ERROR_MESSAGE_DRIFTER_INVERTED "Drifter was inverted, samples weren't taken."
@@ -69,16 +70,20 @@ char logLine[LOG_DATA_STRING_SIZE] = "";
 struct SystemErrors {
   bool noSdDetected;
   bool drifterInverted;
+  bool mainBatteryDepleted;
 };
 
-struct SystemErrors systemErrors = {false, false};
+struct SystemErrors systemErrors = {false, false, false};
+
+#define MAX_BATTERY_VOLTAGE 4.2
+#define MIN_BATTERY_VOLTAGE 2.8
+int mainBatteryLevelPercent;
 
 const char logFileName[15] = "/DATA.CSV";
 const char errorFileName[15] = "/ERRORS.TXT";
 
 #define READ_COMMAND "R"
 #define SLEEP_COMMAND "sleep"
-
 
 //K1.0 stuff
 #define K1_ADDRESS 100              //default I2C ID number for EZO EC Circuit.
@@ -102,7 +107,6 @@ String serialInput;
 
 uint8_t i;
 uint8_t j;
-
 
 //Accelerometer
 Adafruit_LIS3DH accelerometer = Adafruit_LIS3DH();
@@ -135,10 +139,12 @@ void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
   delay(4000);
-  Serial.println("\nMini Drifter version 0.0000000001");
+  Serial.println("\nMini Drifter version 0.8");
 
   pinMode(PIN_LED_RED, OUTPUT);
   pinMode(PIN_LED_GREEN, OUTPUT);
+  pinMode(PIN_LED_STATUS, OUTPUT);
+  pinMode(PIN_VOLTAGE_BATT_CIRC_ENABLE, OUTPUT);
 
   Timestamp initialTime;
   initialTime.hours = 4;
@@ -163,32 +169,75 @@ void setup() {
 
 void loop() {
   // put your main code here, to run repeatedly:
-  delay (200);
   blink(PIN_LED_GREEN, 2);
-  rtc_debug_serial_print();
-  rtc_enterDeepSleep();
+  blink(PIN_LED_STATUS, 4);
+  Serial.println("setup...");
+  sd_setup();
+  sd_openFiles();
+  Serial.println("setup...");
 
+  //rtc_debug_serial_print();
+  //rtc_enterDeepSleep();
+  
+  sprintf(currentDateAndTime, "%d/%d/%d-%d:%d", rtc.getMonth(), rtc.getDay(), rtc.getYear(), rtc.getHours(), rtc.getMinutes());
+
+
+  float battN = (drifter_readMainBatteryVoltage() - MIN_BATTERY_VOLTAGE) / (MAX_BATTERY_VOLTAGE - MIN_BATTERY_VOLTAGE);
+  if (battN < 0) {
+    battN = 0;
+  }
+  mainBatteryLevelPercent = (battN) * 100.0;
+  
+  bool needToUpdateEpaper = false;
+  
+  if (systemErrors.mainBatteryDepleted) {
+  
+    if (mainBatteryLevelPercent > 0) {
+      errorFile.write(currentDateAndTime);
+      errorFile.write(" succesfully regained power.\n");
+      errorFile.flush();
+      systemErrors.mainBatteryDepleted = false;
+      needToUpdateEpaper = true;
+    }
+  } else {
+    if (mainBatteryLevelPercent == 0) {
+      systemErrors.mainBatteryDepleted = true;
+      errorFile.write(currentDateAndTime);
+      errorFile.write(" Entered power recovery mode.\n");
+      errorFile.flush();
+      epaper_clear();
+      epaper_drawPowerRecoveryModeIcon();
+    }
+      needToUpdateEpaper = true;
+  }
+  
   AccelerometerReading accel = accelerometer_read();
   systemErrors.drifterInverted = accel.z < 0;
 
+  if (!systemErrors.mainBatteryDepleted) {
   if (systemErrors.drifterInverted) {
     /* Drifter is not upright, don't take samples */
-  // request to all devices on the bus
   } else {
 
-    Serial.println("Taking measurements...");
-    temp_readTemperatures();
-    k1_handle_measurement();
-    sd_logData();
+    if (!systemErrors.noSdDetected) {
+      Serial.println("Taking measurements...");
+      temp_readTemperatures();
+      k1_handle_measurement();
+      sd_logData();
+      epaper_clear();
+      epaper_drawSensorData();
+    }
   }
 
 
 // errorfile.write("\n");   /////////////////////////////////
   drifter_handleSystemErrors();
-  epaper_update();
+  }
+  if (needToUpdateEpaper) epaper_update();
   i++;
   j++;
-  delay(3*1000);
+  sd_closeFiles();
+  delay(60*1000);
 }
 
 void rtc_setup(Timestamp initialTime) {
@@ -201,64 +250,26 @@ void rtc_setup(Timestamp initialTime) {
 
 void rtc_enterDeepSleep() {
   // Interval Timing and Sleep Code
-  delay(200);   // just for debugging
-
-  // It's not like a delay, setting the seconds to next alarm means that when the seconds in the real time clock matches the number we set here,
-  // the alarm goes off. This is why you have to make nextAlarmTimeSeconds be a funciton of itself. The next alarm time is not relative to
-  // current time, its absolute.
   nextAlarmTimeMinutes = (nextAlarmTimeMinutes + SAMPLE_INTERVAL_MINUTES) % 60;
-  nextAlarmTimeMinutes = rtc.getMinutes();
-  nextAlarmTimeSeconds = rtc.getSeconds() + 8;
+  nextAlarmTimeSeconds = rtc.getSeconds();
+  //nextAlarmTimeMinutes = rtc.getMinutes();
+  //nextAlarmTimeSeconds = (rtc.getSeconds() + 8);
+  //if (nextAlarmTimeSeconds > 59) {
+    //nextAlarmTimeMinutes = (nextAlarmTimeMinutes + 1) % 60;
+    //nextAlarmTimeSeconds %= 60;
+  //}
   rtc.setAlarmSeconds(nextAlarmTimeSeconds);
-  Serial.println("Next alarm time minutes");
-  Serial.println(nextAlarmTimeMinutes);
-  delay(100);
   rtc.setAlarmMinutes(nextAlarmTimeMinutes); // RTC time to wake, currently seconds only
-  rtc.enableAlarm(rtc.MATCH_MMSS); // Match seconds only
+  rtc.enableAlarm(rtc.MATCH_MMSS); // Match minutes and seconds
   rtc.attachInterrupt(alarmMatch); // Attaches function to be called, currently blank
   delay(50); // Brief delay prior to sleeping not really sure its required
 
-  Serial.println("Entering deep sleep..");
-  delay(100);
+  blink(PIN_LED_GREEN, 2);
   rtc.standbyMode();    // Sleep until next alarm match
-  Serial.println("Read");
-  delay(100);
-  // Code re-starts here after sleep !
+  // Code re-starts here after sleep!
 }
 
 void alarmMatch() {}
-
-void rtc_debug_serial_print() {
-  Serial.print(rtc.getDay());
-  delay(100);
-  Serial.print("/");
-    delay(100);
-  Serial.print(rtc.getMonth());
-    delay(100);
-  Serial.print("/");
-    delay(100);
-  Serial.print(rtc.getYear()+2000);
-    delay(100);
-  Serial.print(" ");
-    delay(100);
-  Serial.print(rtc.getHours());
-    delay(100);
-  Serial.print(":");
-    delay(100);
-  if(rtc.getMinutes() < 10)
-    Serial.print('0');      // Trick to add leading zero for formatting
-  Serial.print(rtc.getMinutes());
-    delay(100);
-  Serial.print(":");
-    delay(100);
-  if(rtc.getSeconds() < 10)
-    Serial.print('0');      // Trick to add leading zero for formatting
-  Serial.print(rtc.getSeconds());
-    delay(100);
-  Serial.print(",");
-    delay(100);
-//  Serial.println(BatteryVoltage());   // Print battery voltage
-}
 
 // blink out an error code, Red on pin #13 or Green on pin #8
 void blink(uint8_t LED, uint8_t flashes) {
@@ -273,33 +284,60 @@ void blink(uint8_t LED, uint8_t flashes) {
 
 void sd_setup() {
    // SD setup
+  bool logFileEmpty = false;
   if (!SD.begin(cardSelect)) {
     Serial.println("Couldn't initialize SD card");
+    systemErrors.noSdDetected = true;
+  } else {
+    systemErrors.noSdDetected = false;
+    logFileEmpty = !SD.exists(logFileName);
   }
 
-  bool logFileEmpty = !SD.exists(logFileName);
+  sd_openFiles();
+  
+  if(!systemErrors.noSdDetected) {
 
-  logFile = SD.open(logFileName, FILE_WRITE);
-  errorFile = SD.open(errorFileName, FILE_WRITE);
-
-  if (!logFile) {
-    Serial.println("Couldn't open log file");
-  }
-  if (!errorFile) {
-    Serial.println("Couldn't open error file");
-  }
-
-  if (logFileEmpty) {
-    /* File didn't previously exist, print header at top */
-    sprintf(logLine, "yy-mm-dd-HH:MM,Int,Ext,Tds,Sal,Con\n");
-    logFile.write(logLine);
+    if (logFileEmpty) {
+      /* File didn't previously exist, print header at top */
+      sprintf(logLine, "mm/dd/yy-HH:MM,Int,Ext,Tds,Sal,Con,Bat%\n");
+      logFile.write(logLine);
   }
 
   logFile.flush();
+  }
+  
+  sd_closeFiles();
+}
+
+void sd_openFiles() {
+
+  if (!systemErrors.noSdDetected) {
+
+    logFile = SD.open(logFileName, FILE_WRITE);
+    errorFile = SD.open(errorFileName, FILE_WRITE);
+
+    if (!logFile) {
+      Serial.println("Couldn't open log file");
+      systemErrors.noSdDetected = true;
+    }
+  
+    if (!errorFile) {
+      Serial.println("Couldn't open error file");
+      systemErrors.noSdDetected = true;
+    }
+  }
+}
+
+void sd_closeFiles() {
+  if (logFile)
+    logFile.close();
+    
+  if (errorFile)
+    errorFile.close();
 }
 
 void sd_logData() {
-  sprintf(logLine, "%d-%d-%d-%d:%d,%.2f,%.2f,%.2f,%.2f,%.2f\n", /*month*/-1, /*day*/-1, /*year*/-1, /*hours*/21, /*min*/ 21, intTempF, extTempF, tds_float, sal_float, ec_float);
+  sprintf(logLine, "%d-%d-%d-%d:%d,%.2f,%.2f,%.2f,%.2f,%.2f,%d\n", /*month*/rtc.getMonth(), /*day*/rtc.getDay(), /*year*/rtc.getYear(), /*hours*/rtc.getHours(), /*min*/ rtc.getMinutes(), intTempF, extTempF, tds_float, sal_float, ec_float, mainBatteryLevelPercent);
   logFile.write(logLine);
   for (int i = 0; i < LOG_DATA_STRING_SIZE; i++) {
     logLine[i] = '\0';
@@ -321,14 +359,17 @@ void logError(string msg){
 */
 
 void drifter_handleSystemErrors() {
+
   if (systemErrors.noSdDetected) {
-    errorFile.write("PUT_DATE_HERE ");
-    errorFile.write(ERROR_MESSAGE_NO_SD);
-    errorFile.write("\n");
+    sd_closeFiles();
+    epd.clearBuffer();
+    epaper_drawSdCardErrorIcon();
+    sd_setup();
   }
 
   if (systemErrors.drifterInverted) {
-    errorFile.write("PUT_DATE_HERE ");
+    errorFile.write(currentDateAndTime);
+    errorFile.write(" ");
     errorFile.write(ERROR_MESSAGE_DRIFTER_INVERTED);
     errorFile.write("\n");
   }
@@ -340,13 +381,41 @@ void epaper_setup() {
   // ePaper display setup
   epd.begin();
   epd.setTextWrap(true);
+  epd.setTextSize(1);
+  epd.setTextColor(EPD_BLACK);
+}
+
+void epaper_drawPowerRecoveryModeIcon() {
   epd.setTextSize(2);
+  epd.setCursor(0, 25);
+  epd.print("ENTERED\nPOWER\nRECOVERY\nMODE\n");
+  epd.print(rtc.getMonth());
+  epd.print("/");
+  epd.print(rtc.getDay());
+  epd.print(" ");
+  epd.print(rtc.getHours());
+  epd.print(":");
+  epd.print(rtc.getMinutes());
+}
+
+void epaper_drawSdCardErrorIcon() {
+  epd.setTextSize(3);
+  epd.setCursor(0, 25);
+  epd.print("No SD\n");
+  epd.setTextSize(1);
+}
+
+void epaper_clear() {
+  epd.clearBuffer();
 }
 
 void epaper_update() {
-    epd.clearBuffer();
+  epd.display();
+}
+
+void epaper_drawSensorData() {
     epd.setCursor(10, 10);
-    epd.setTextColor(EPD_BLACK);
+    epd.setTextSize(1);
     if (systemErrors.drifterInverted) {
       epd.print("Not upright");
       epd.print("\nInt: ");
@@ -355,9 +424,14 @@ void epaper_update() {
       epd.print("\nTDS: NA");
       epd.print("\nCon: NA");
       epd.print("\nSal: NA");
-      epd.print("\n");
+      epd.print("\nBat: ");
+      epd.print(mainBatteryLevelPercent);
+      epd.print("%, ");
+      epd.print(drifter_readMainBatteryVoltage());
+      epd.print("V\n");
+      epd.print("%\n");
     } else {
-      epd.print("MiniDrifter 0.01");
+      epd.print("MiniDrifter 0.8");
       epd.print("\nInt: ");
       epd.print(intTempF);
       epd.print("\nExt: ");
@@ -368,22 +442,19 @@ void epaper_update() {
       epd.print(ec_float);
       epd.print("\nSal: ");
       epd.print(sal_float);
-      epd.print("\n");
+      epd.print("\nBat: ");
+      epd.print(mainBatteryLevelPercent);
+      epd.print("%, ");
+      epd.print(drifter_readMainBatteryVoltage());
+      epd.print("V\n");
       epd.print(j);
       epd.print(" samples taken");
     }
-      epd.display();
 }
 
 void temp_setup() {
-  Serial.println("Dallas Temperature IC Control Library Demo");
-
   // locate devices on the bus
-  Serial.print("Locating devices...");
   sensors.begin();
-  Serial.print("Found ");
-  Serial.print(sensors.getDeviceCount(), DEC);
-  Serial.println(" devices.");
 
   // report parasite power requirements
   Serial.print("Parasite power is: ");
@@ -392,14 +463,6 @@ void temp_setup() {
 
   // set the resolution to 9 bit (Each Dallas/Maxim device is capable of several different resolutions)
   sensors.setResolution(insideThermometer, 9);
-
-  Serial.print("Internal temp Resolution: ");
-  Serial.print(sensors.getResolution(insideThermometer), DEC);
-  Serial.println();
-
-   Serial.print("External temp Resolution: ");
-  Serial.print(sensors.getResolution(externalThermometer), DEC);
-  Serial.println();
 }
 
 void temp_readTemperatures() {
@@ -497,8 +560,6 @@ void k1_takeMeasurement() {
   Wire.requestFrom(K1_ADDRESS, 32, 1);      //call the circuit and request 32 bytes (this could be too small, but it is the max i2c buffer size for an Arduino)
   k1ReturnCode = Wire.read();               //the first byte is the response code, we read this separately.
 
-
-
   i=0;
   while (Wire.available()) {                 //are there bytes to receive.
     k1InChar = Wire.read();                  //receive a byte.
@@ -518,7 +579,6 @@ void k1_takeMeasurement() {
 
 void k1_parse_data() {
   //this function will break up the CSV string into its 4 individual parts. EC|TDS|SAL|SG.
-                                      //this is done using the C command “strtok”.
 
   ec = strtok(k1Data, ",");          //let's pars the string at each comma.
   tds = strtok(NULL, ",");            //let's pars the string at each comma.
@@ -567,35 +627,35 @@ void k1_handle_measurement(){
       case 2:                                 //decimal 2.
         //Serial.println("Failed");             //means the command has failed.
         k1_takeMeasurement();
-        errorFile.write("Error: K1 code 2, Command has failed, trying again");
+        errorFile.write("K1 code 2, Command has failed, trying again");
         if(k1ReturnCode = 2){
-          errorFile.write("Error: K1 code 2, Command has failed");
+          errorFile.write("K1 code 2, Command has failed");
         }
         break;                                //exits the switch case.
   
       case 254:                               //decimal 254.
         //Serial.println("Pending");            //means the command has not yet been finished calculating.
-        errorFile.write("Error: K1 code 254, Command failed to process in given delay.");
+        errorFile.write("K1 code 254, Command failed to process in given delay.");
         break;                                //exits the switch case.
   
       case 255:                               //decimal 255.
         //Serial.println("No Data");            //means there is no further data to send.
-        errorFile.write("Error: K1 code 255, No data received, command did not reach K1.0");
+        errorFile.write("K1 code 255, No data received, command did not reach K1.0");
         break;                                //exits the switch case.
     }
 
   if(ec_float < 5 || ec_float > 100000){
-      errorFile.write("\nError: K1 Conductivity Out of Bounds. Resampling!");
+      errorFile.write("\nK1 Conductivity Out of Bounds. Resampling...");
       ec_float = -1;
       k1_retry = true;
     }
     if(tds_float < 2 || tds_float > 50000){
-      errorFile.write("\nError: K1 TDS Out of Bounds. Resampling!");
+      errorFile.write("\nK1 TDS Out of Bounds. Resampling...");
       tds_float = -1;
       k1_retry = true;
     }
     if(sal_float < 0.01 || sal_float > 35){
-      errorFile.write("\nError: K1 Salinity Out of Bounds. Resampling!");
+      errorFile.write("\nK1 Salinity Out of Bounds. Resampling...");
       sal_float = -1;
       k1_retry = true;
     }
@@ -604,15 +664,15 @@ void k1_handle_measurement(){
     k1_takeMeasurement();
     if(k1ReturnCode = 1){
       if(ec_float < 5 || ec_float > 100000){
-        errorFile.write("\nError: K1 Conductivity Out of Bounds");
+        errorFile.write("\nK1 Conductivity Out of Bounds");
         ec_float = -1;
       }
       if(tds_float < 2 || tds_float > 50000){
-        errorFile.write("\nError: K1 TDS Out of Bounds");
+        errorFile.write("\nK1 TDS Out of Bounds");
         tds_float = -1;
       }
       if(sal_float < 0.01 || sal_float > 35){
-        errorFile.write("\nError: K1 Salinity Out of Bounds");
+        errorFile.write("\nK1 Salinity Out of Bounds");
         sal_float = -1;
       }
     }
@@ -620,4 +680,14 @@ void k1_handle_measurement(){
   k1_retry = false;
 
   k1_sleep();
+}
+
+float drifter_readMainBatteryVoltage() {
+  //Enable battery reading circuit
+  digitalWrite(PIN_VOLTAGE_BATT_CIRC_ENABLE, HIGH);
+  const float vPin = (analogRead(PIN_VOLTAGE_BATT) / 1023.0) * 3.3;
+  digitalWrite(PIN_VOLTAGE_BATT_CIRC_ENABLE, LOW);
+  const float dividerFraction = 3300.0 / (3300.0 + 910.0);
+  const float vBatt = (vPin / dividerFraction);
+  return vBatt;
 }
