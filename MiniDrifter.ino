@@ -116,6 +116,7 @@ typedef struct AccelerometerReading {
 
 float intTempF;
 float extTempF;
+bool temp_retry;
 
 // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 OneWire oneWire(ONE_WIRE_BUS);
@@ -182,6 +183,7 @@ void loop() {
   }
 
 
+// errorfile.write("\n");   /////////////////////////////////
   drifter_handleSystemErrors();
   epaper_update();
   i++;
@@ -305,6 +307,19 @@ void sd_logData() {
   logFile.flush();
 }
 
+/* //function from Hugo, function to get the current date, might be useless now
+void getDate(){
+  //sprintf(date,"%d-%d-%d-%d:%d" , rtc.getMonth(), rtc,getDay(), rtc,getYear(), rtc.getHours(), rtc.getMinutes() );
+}
+*/
+
+/*    //function from hugo, proposed way of writing errors all at once. Not implemented in any meaningful way.
+void logError(string msg){
+  errorFile.write(": ");
+  errorFile.write(msg);
+}
+*/
+
 void drifter_handleSystemErrors() {
   if (systemErrors.noSdDetected) {
     errorFile.write("PUT_DATE_HERE ");
@@ -394,6 +409,45 @@ void temp_readTemperatures() {
 
   tempC = sensors.getTempC(externalThermometer);
   extTempF = DallasTemperature::toFahrenheit(tempC);
+}
+
+void temp_handle_measurement(){
+  temp_readTemperatures();
+
+  //connection not established error handling
+  if(intTempF == -196.6 || extTempF == -196.6){
+    errorFile.write("\nError 196, Value indicates no data, trying again.");
+    temp_readTemperatures();
+  }  
+
+  //out of bounds error handling
+  if(intTempF < 41 || intTempF > 122){
+    errorFile.write("\nInternal temperature out of bounds. Resampling!");
+    intTempF = -1;
+    temp_retry = true;
+  }
+    
+   if(extTempF < 41 || extTempF > 113){
+    errorFile.write("\nExternal temperature out of bounds. Resampling!");
+    extTempF = -1;
+    temp_retry = true;
+  }
+
+
+  if(temp_retry) {
+    k1_takeMeasurement();
+    if(k1ReturnCode = 1){
+      if(intTempF < 41 || intTempF > 122){
+        errorFile.write("\nInternal temperature out of bounds.");
+        intTempF = -1;
+      }
+      if(extTempF < 41 || extTempF > 113){
+        errorFile.write("\nExternal temperature out of bounds.");
+        extTempF = -1;
+      }
+    }
+  }
+  temp_retry = false;
 }
 
 void accelerometer_setup() {
@@ -564,8 +618,6 @@ void k1_handle_measurement(){
     }
   }
   k1_retry = false;
-
-
 
   k1_sleep();
 }
