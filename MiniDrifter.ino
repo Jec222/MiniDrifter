@@ -25,8 +25,8 @@ const byte minutes = 20;
 const byte seconds = 0;
 
 // Date info for RTC
-const byte day = 25;
-const byte month = 1;
+const byte day = 18;
+const byte month = 2;
 const byte year = 20;
 
 typedef struct Timestamp {
@@ -431,7 +431,7 @@ void epaper_drawSensorData() {
       epd.print("V\n");
       epd.print("%\n");
     } else {
-      epd.print("MiniDrifter 0.8");
+      epd.print("MiniDrifter");
       epd.print("\nInt: ");
       epd.print(intTempF);
       epd.print("\nExt: ");
