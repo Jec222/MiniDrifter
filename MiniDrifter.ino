@@ -15,18 +15,18 @@
 #define PIN_VOLTAGE_BATT 14    // Main Battery Voltage on Pin A0 (14 ide)
 #define PIN_VOLTAGE_BATT_CIRC_ENABLE 11 //Enable pin for batt reading circuit
 #define SAMPLE_INTERVAL_SECONDS 0 // RTC - Sample interval in seconds
-#define SAMPLE_INTERVAL_MINUTES 1
+#define SAMPLE_INTERVAL_MINUTES 30
 
 const int SampleIntSeconds = 500;   //Simple Delay used for testing, ms i.e. 1000 = 1 sec
 
 // Time info for RTC
-const byte hours = 8;
-const byte minutes = 20;
+const byte hours = 22;
+const byte minutes = 25;
 const byte seconds = 0;
 
 // Date info for RTC
-const byte day = 25;
-const byte month = 1;
+const byte day = 20;
+const byte month = 2;
 const byte year = 20;
 
 typedef struct Timestamp {
@@ -137,7 +137,7 @@ Adafruit_SSD1675 epd(250, 122, EPD_DC, EPD_RESET, EPD_CS, SRAM_CS, EPD_BUSY);
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
-  delay(4000);
+  delay(10000);
   Serial.println("\nMini Drifter version 0.8");
 
   pinMode(PIN_LED_RED, OUTPUT);
@@ -176,7 +176,6 @@ void loop() {
   Serial.println("setup...");
 
   //rtc_debug_serial_print();
-  //rtc_enterDeepSleep();
   
   sprintf(currentDateAndTime, "%d/%d/%d-%d:%d", rtc.getMonth(), rtc.getDay(), rtc.getYear(), rtc.getHours(), rtc.getMinutes());
 
@@ -235,7 +234,8 @@ void loop() {
   i++;
   j++;
   sd_closeFiles();
-  delay(60*1000);
+  rtc_enterDeepSleep();
+  //delay(60*1000);
 }
 
 void rtc_setup(Timestamp initialTime) {
