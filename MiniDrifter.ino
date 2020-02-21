@@ -21,7 +21,7 @@ const int SampleIntSeconds = 500;   //Simple Delay used for testing, ms i.e. 100
 
 // Time info for RTC
 const byte hours = 22;
-const byte minutes = 25;
+const byte minutes = 50;
 const byte seconds = 0;
 
 // Date info for RTC
@@ -120,6 +120,7 @@ typedef struct AccelerometerReading {
 
 float intTempF;
 float extTempF;
+bool temp_retry;
 
 // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 OneWire oneWire(ONE_WIRE_BUS);
@@ -228,6 +229,7 @@ void loop() {
   }
 
 
+// errorfile.write("\n");   /////////////////////////////////
   drifter_handleSystemErrors();
   }
   if (needToUpdateEpaper) epaper_update();
@@ -335,13 +337,26 @@ void sd_closeFiles() {
 }
 
 void sd_logData() {
-  sprintf(logLine, "%d-%d-%d-%d:%d,%.2f,%.2f,%.2f,%.2f,%.2f,%d\n", /*month*/rtc.getMonth(), /*day*/rtc.getDay(), /*year*/rtc.getYear(), /*hours*/rtc.getHours(), /*min*/ rtc.getMinutes(), intTempF, extTempF, tds_float, sal_float, ec_float, mainBatteryLevelPercent);
+  sprintf(logLine, "%d/%d/%d-%d:%d,%.2f,%.2f,%.2f,%.2f,%.2f,%d\n", /*month*/rtc.getMonth(), /*day*/rtc.getDay(), /*year*/rtc.getYear(), /*hours*/rtc.getHours(), /*min*/ rtc.getMinutes(), intTempF, extTempF, tds_float, sal_float, ec_float, mainBatteryLevelPercent);
   logFile.write(logLine);
   for (int i = 0; i < LOG_DATA_STRING_SIZE; i++) {
     logLine[i] = '\0';
   }
   logFile.flush();
 }
+
+/* //function from Hugo, function to get the current date, might be useless now
+void getDate(){
+  //sprintf(date,"%d-%d-%d-%d:%d" , rtc.getMonth(), rtc,getDay(), rtc,getYear(), rtc.getHours(), rtc.getMinutes() );
+}
+*/
+
+/*    //function from hugo, proposed way of writing errors all at once. Not implemented in any meaningful way.
+void logError(string msg){
+  errorFile.write(": ");
+  errorFile.write(msg);
+}
+*/
 
 void drifter_handleSystemErrors() {
 
@@ -416,7 +431,7 @@ void epaper_drawSensorData() {
       epd.print("V\n");
       epd.print("%\n");
     } else {
-      epd.print("MiniDrifter 0.8");
+      epd.print("MiniDrifter");
       epd.print("\nInt: ");
       epd.print(intTempF);
       epd.print("\nExt: ");
@@ -457,6 +472,45 @@ void temp_readTemperatures() {
 
   tempC = sensors.getTempC(externalThermometer);
   extTempF = DallasTemperature::toFahrenheit(tempC);
+}
+
+void temp_handle_measurement(){
+  temp_readTemperatures();
+
+  //connection not established error handling
+  if(intTempF == -196.6 || extTempF == -196.6){
+    errorFile.write("\nError 196, Value indicates no data, trying again.");
+    temp_readTemperatures();
+  }  
+
+  //out of bounds error handling
+  if(intTempF < 41 || intTempF > 122){
+    errorFile.write("\nInternal temperature out of bounds. Resampling!");
+    intTempF = -1;
+    temp_retry = true;
+  }
+    
+   if(extTempF < 41 || extTempF > 113){
+    errorFile.write("\nExternal temperature out of bounds. Resampling!");
+    extTempF = -1;
+    temp_retry = true;
+  }
+
+
+  if(temp_retry) {
+    k1_takeMeasurement();
+    if(k1ReturnCode = 1){
+      if(intTempF < 41 || intTempF > 122){
+        errorFile.write("\nInternal temperature out of bounds.");
+        intTempF = -1;
+      }
+      if(extTempF < 41 || extTempF > 113){
+        errorFile.write("\nExternal temperature out of bounds.");
+        extTempF = -1;
+      }
+    }
+  }
+  temp_retry = false;
 }
 
 void accelerometer_setup() {
@@ -624,8 +678,6 @@ void k1_handle_measurement(){
     }
   }
   k1_retry = false;
-
-
 
   k1_sleep();
 }
