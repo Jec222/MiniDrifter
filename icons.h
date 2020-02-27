@@ -1,6 +1,23 @@
 #ifndef MINI_DRIFTER_ICONS_H
 #define MINI_DRIFTER_ICONS_H
 
+// Pass in the bytes of the 1 bit-per-pixel icon along with it's width, height, and the desired x/y
+// coordinates to see if the specified pixel is on or off. These icons are essentially bit masks that tell 
+// you where to draw pixels and where to leave the screen blank. An external program was written in C to
+// convert black and white images to these 1bpp bit masks and output them as a C array, which was then
+// copy/pasted into this file.
+
+bool icon_pixelIsOn(const unsigned char *iconBytes, const int iconWidth, const int iconHeight, int x, int y) {
+  if (x >= iconWidth || y >= iconHeight || x < 0 || y < 0) {
+    return false;
+  }
+  
+  const int widthBytes = iconWidth >> 3;
+  const int bitShift = 7 - (x % 8);
+  
+  return iconBytes[(y*widthBytes) + (x >> 3)] & (1 << bitShift);
+}
+
 const int NO_SD_ICON_WIDTH = 128;
 const int NO_SD_ICON_HEIGHT = 96;
 
@@ -205,14 +222,4 @@ const unsigned char BATTERY_ICON_BYTES[1536] = {
   0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe, 0x00
 };
 
-bool icon_pixelIsOn(const unsigned char *iconBytes, const int iconWidth, const int iconHeight, int x, int y) {
-  if (x >= iconWidth || y >= iconHeight || x < 0 || y < 0) {
-    return false;
-  }
-  
-  const int widthBytes = iconWidth >> 3;
-  const int bitShift = 7 - (x % 8);
-  
-  return iconBytes[((y*widthBytes)) + (x >> 3)] & (1 << bitShift);
-}
 #endif

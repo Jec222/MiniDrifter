@@ -251,12 +251,7 @@ void rtc_setup(Timestamp initialTime) {
 void rtc_enterDeepSleep() {
   nextAlarmTimeMinutes = (nextAlarmTimeMinutes + SAMPLE_INTERVAL_MINUTES) % 60;
   nextAlarmTimeSeconds = rtc.getSeconds();
-  //nextAlarmTimeMinutes = rtc.getMinutes();
-  //nextAlarmTimeSeconds = (rtc.getSeconds() + 8);
-  //if (nextAlarmTimeSeconds > 59) {
-    //nextAlarmTimeMinutes = (nextAlarmTimeMinutes + 1) % 60;
-    //nextAlarmTimeSeconds %= 60;
-  //}
+  
   rtc.setAlarmSeconds(nextAlarmTimeSeconds);
   rtc.setAlarmMinutes(nextAlarmTimeMinutes);
   rtc.enableAlarm(rtc.MATCH_MMSS); // Match minutes and seconds
