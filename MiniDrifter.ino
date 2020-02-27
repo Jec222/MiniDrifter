@@ -7,27 +7,27 @@
 #include <Wire.h> //For i2c with k1.0
 #include <DallasTemperature.h>
 #include <RTCZero.h>
+#include "icons.h"
 
 #define PIN_LED_RED 13 // Red LED on Pin #13
 #define PIN_LED_GREEN 8 // Green LED on Pin #8
 #define PIN_LED_STATUS 11
-//#define PIN_VOLTAGE_BATT_BACKUP A7    // Battery Voltage on Pin A7
 #define PIN_VOLTAGE_BATT 14    // Main Battery Voltage on Pin A0 (14 ide)
 #define PIN_VOLTAGE_BATT_CIRC_ENABLE 11 //Enable pin for batt reading circuit
 #define SAMPLE_INTERVAL_SECONDS 0 // RTC - Sample interval in seconds
-#define SAMPLE_INTERVAL_MINUTES 30
+#define SAMPLE_INTERVAL_MINUTES 1
 
-const int SampleIntSeconds = 500;   //Simple Delay used for testing, ms i.e. 1000 = 1 sec
+#define PIN_VOLTAGE_BATT_BACKUP A7    // Battery Voltage on Pin A7
 
 // Time info for RTC
-const byte hours = 22;
-const byte minutes = 50;
-const byte seconds = 0;
+const byte HOURS = 22;
+const byte MINUTES = 50;
+const byte SECONDS = 0;
 
 // Date info for RTC
-const byte day = 20;
-const byte month = 2;
-const byte year = 20;
+const byte DAY = 20;
+const byte MONTH = 2;
+const byte YEAR = 20;
 
 typedef struct Timestamp {
   byte hours;
@@ -58,10 +58,10 @@ char currentDateAndTime[] = "mm/dd/yy-HH:MM";
 File logFile;
 File errorFile;
 
-const int LOG_DECIMAL_DIGITS = 8;
+const int LOG_DECIMAL_PRECISION = 8;
 const int NUM_SAMPLES = 5;
 const int TIMESTAMP_SIZE = 8 + strlen("-XX::XX");
-const int LOG_DATA_STRING_SIZE = (LOG_DECIMAL_DIGITS * 5) + TIMESTAMP_SIZE + NUM_SAMPLES + 4;
+const int LOG_DATA_STRING_SIZE = (LOG_DECIMAL_PRECISION * 5) + TIMESTAMP_SIZE + NUM_SAMPLES + 4;
 char logLine[LOG_DATA_STRING_SIZE] = "";
 
 #define ERROR_MESSAGE_DRIFTER_INVERTED "Drifter was inverted, samples weren't taken."
@@ -76,7 +76,7 @@ struct SystemErrors {
 struct SystemErrors systemErrors = {false, false, false};
 
 #define MAX_BATTERY_VOLTAGE 4.2
-#define MIN_BATTERY_VOLTAGE 2.8
+#define MIN_BATTERY_VOLTAGE 3.0
 int mainBatteryLevelPercent;
 
 const char logFileName[15] = "/DATA.CSV";
@@ -129,7 +129,7 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 
 // arrays to hold device address
-DeviceAddress insideThermometer = {0x28, 0x31, 0x74, 0xE3, 0x08, 0x00, 0x00, 0x52};
+DeviceAddress internalThermometer = {0x28, 0x31, 0x74, 0xE3, 0x08, 0x00, 0x00, 0x52};
 DeviceAddress externalThermometer = {0x28, 0x9C, 0x32, 0x42, 0x0B, 0x00, 0x00, 0xF3};
 
 //Epaper display
@@ -147,12 +147,12 @@ void setup() {
   pinMode(PIN_VOLTAGE_BATT_CIRC_ENABLE, OUTPUT);
 
   Timestamp initialTime;
-  initialTime.hours = 4;
-  initialTime.minutes = 38;
-  initialTime.seconds = 0;
-  initialTime.day = 3;
-  initialTime.month = 2;
-  initialTime.year = 20;
+  initialTime.hours = HOURS;
+  initialTime.minutes = MINUTES;
+  initialTime.seconds = SECONDS;
+  initialTime.day = DAY;
+  initialTime.month = MONTH;
+  initialTime.year = YEAR;
 
   rtc_setup(initialTime);
   sd_setup();
@@ -178,7 +178,8 @@ void loop() {
 
   //rtc_debug_serial_print();
   
-  sprintf(currentDateAndTime, "%d/%d/%d-%d:%d", rtc.getMonth(), rtc.getDay(), rtc.getYear(), rtc.getHours(), rtc.getMinutes());
+  sprintf(currentDateAndTime, "%02d/%02d/%02d-%02d:%02d", rtc.getMonth(), rtc.getDay(), rtc.getYear(), rtc.getHours(), rtc.getMinutes());
+  Serial.println(currentDateAndTime);
 
 
   float battN = (drifter_readMainBatteryVoltage() - MIN_BATTERY_VOLTAGE) / (MAX_BATTERY_VOLTAGE - MIN_BATTERY_VOLTAGE);
@@ -225,11 +226,10 @@ void loop() {
       sd_logData();
       epaper_clear();
       epaper_drawSensorData();
+      epaper_drawDayCode();
     }
   }
 
-
-// errorfile.write("\n");   /////////////////////////////////
   drifter_handleSystemErrors();
   }
   if (needToUpdateEpaper) epaper_update();
@@ -249,7 +249,6 @@ void rtc_setup(Timestamp initialTime) {
 }
 
 void rtc_enterDeepSleep() {
-  // Interval Timing and Sleep Code
   nextAlarmTimeMinutes = (nextAlarmTimeMinutes + SAMPLE_INTERVAL_MINUTES) % 60;
   nextAlarmTimeSeconds = rtc.getSeconds();
   //nextAlarmTimeMinutes = rtc.getMinutes();
@@ -259,7 +258,7 @@ void rtc_enterDeepSleep() {
     //nextAlarmTimeSeconds %= 60;
   //}
   rtc.setAlarmSeconds(nextAlarmTimeSeconds);
-  rtc.setAlarmMinutes(nextAlarmTimeMinutes); // RTC time to wake, currently seconds only
+  rtc.setAlarmMinutes(nextAlarmTimeMinutes);
   rtc.enableAlarm(rtc.MATCH_MMSS); // Match minutes and seconds
   rtc.attachInterrupt(alarmMatch); // Attaches function to be called, currently blank
   delay(50); // Brief delay prior to sleeping not really sure its required
@@ -271,7 +270,7 @@ void rtc_enterDeepSleep() {
 
 void alarmMatch() {}
 
-// blink out an error code, Red on pin #13 or Green on pin #8
+// blink led
 void blink(uint8_t LED, uint8_t flashes) {
   uint8_t i;
   for (i=0; i<flashes; i++) {
@@ -283,8 +282,8 @@ void blink(uint8_t LED, uint8_t flashes) {
 }
 
 void sd_setup() {
-   // SD setup
   bool logFileEmpty = false;
+  
   if (!SD.begin(cardSelect)) {
     Serial.println("Couldn't initialize SD card");
     systemErrors.noSdDetected = true;
@@ -298,10 +297,10 @@ void sd_setup() {
   if(!systemErrors.noSdDetected) {
 
     if (logFileEmpty) {
-      /* File didn't previously exist, print header at top */
+      //File didn't previously exist, print header at top
       sprintf(logLine, "mm/dd/yy-HH:MM,Int,Ext,Tds,Sal,Con,Bat%\n");
       logFile.write(logLine);
-  }
+    }
 
   logFile.flush();
   }
@@ -337,7 +336,7 @@ void sd_closeFiles() {
 }
 
 void sd_logData() {
-  sprintf(logLine, "%d/%d/%d-%d:%d,%.2f,%.2f,%.2f,%.2f,%.2f,%d\n", /*month*/rtc.getMonth(), /*day*/rtc.getDay(), /*year*/rtc.getYear(), /*hours*/rtc.getHours(), /*min*/ rtc.getMinutes(), intTempF, extTempF, tds_float, sal_float, ec_float, mainBatteryLevelPercent);
+  sprintf(logLine, "%s,%.2f,%.2f,%.2f,%.2f,%.2f,%d\n", currentDateAndTime, intTempF, extTempF, tds_float, sal_float, ec_float, mainBatteryLevelPercent);
   logFile.write(logLine);
   for (int i = 0; i < LOG_DATA_STRING_SIZE; i++) {
     logLine[i] = '\0';
@@ -378,17 +377,26 @@ void drifter_handleSystemErrors() {
 }
 
 void epaper_setup() {
-  // ePaper display setup
   epd.begin();
   epd.setTextWrap(true);
   epd.setTextSize(1);
   epd.setTextColor(EPD_BLACK);
 }
 
+void epaper_draw1BitIcon(const unsigned char *bytes, const int width, const int height, const int xPos, const int yPos) {
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      if (icon_pixelIsOn(bytes, width, height, x, y)) {
+        epd.drawPixel(xPos + x, yPos + y, EPD_BLACK);
+      }
+    }
+  }
+}
+
 void epaper_drawPowerRecoveryModeIcon() {
-  epd.setTextSize(2);
+  epd.setTextSize(1);
   epd.setCursor(0, 25);
-  epd.print("ENTERED\nPOWER\nRECOVERY\nMODE\n");
+  epd.print("Entered power\nrecovery mode\n");
   epd.print(rtc.getMonth());
   epd.print("/");
   epd.print(rtc.getDay());
@@ -396,13 +404,15 @@ void epaper_drawPowerRecoveryModeIcon() {
   epd.print(rtc.getHours());
   epd.print(":");
   epd.print(rtc.getMinutes());
+  epd.print(".");
+  epaper_draw1BitIcon(BATTERY_ICON_BYTES, BATTERY_ICON_WIDTH, BATTERY_ICON_HEIGHT, 91, 13);
 }
 
 void epaper_drawSdCardErrorIcon() {
-  epd.setTextSize(3);
-  epd.setCursor(0, 25);
-  epd.print("No SD\n");
   epd.setTextSize(1);
+  epd.setCursor(0, 25);
+  epd.print("No SD card...\n\nPlease insert\nSD.");
+  epaper_draw1BitIcon(NO_SD_ICON_BYTES, NO_SD_ICON_WIDTH, NO_SD_ICON_HEIGHT, 91, 13);
 }
 
 void epaper_clear() {
@@ -452,6 +462,13 @@ void epaper_drawSensorData() {
     }
 }
 
+void epaper_drawDayCode() {
+  epd.setTextSize(4);
+  epd.setCursor(80, 10);
+  epd.print("M");
+  epd.setTextSize(1);
+}
+
 void temp_setup() {
   // locate devices on the bus
   sensors.begin();
@@ -462,12 +479,12 @@ void temp_setup() {
   else Serial.println("OFF");
 
   // set the resolution to 9 bit (Each Dallas/Maxim device is capable of several different resolutions)
-  sensors.setResolution(insideThermometer, 9);
+  sensors.setResolution(internalThermometer, 9);
 }
 
 void temp_readTemperatures() {
   sensors.requestTemperatures();
-  float tempC = sensors.getTempC(insideThermometer);
+  float tempC = sensors.getTempC(internalThermometer);
   intTempF = DallasTemperature::toFahrenheit(tempC);
 
   tempC = sensors.getTempC(externalThermometer);
@@ -495,7 +512,6 @@ void temp_handle_measurement(){
     extTempF = -1;
     temp_retry = true;
   }
-
 
   if(temp_retry) {
     k1_takeMeasurement();
