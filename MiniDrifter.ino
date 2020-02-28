@@ -215,22 +215,22 @@ void loop() {
   systemErrors.drifterInverted = accel.z < 0;
 
   if (!systemErrors.mainBatteryDepleted) {
-  if (systemErrors.drifterInverted) {
-    /* Drifter is not upright, don't take samples */
-  } else {
+    if (systemErrors.drifterInverted) {
+      /* Drifter is not upright, don't take samples */
+    } else {
 
-    if (!systemErrors.noSdDetected) {
-      Serial.println("Taking measurements...");
-      temp_readTemperatures();
-      k1_handle_measurement();
-      sd_logData();
-      epaper_clear();
-      epaper_drawSensorData();
-      epaper_drawDayCode();
+      if (!systemErrors.noSdDetected) {
+        Serial.println("Taking measurements...");
+        temp_readTemperatures();
+        k1_handle_measurement();
+        sd_logData();
+        epaper_clear();
+        epaper_drawSensorData();
+        epaper_drawDayCode();
+      }
     }
-  }
 
-  drifter_handleSystemErrors();
+    drifter_handleSystemErrors();
   }
   if (needToUpdateEpaper) epaper_update();
   i++;
