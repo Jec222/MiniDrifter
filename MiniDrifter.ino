@@ -1,4 +1,3 @@
-
 #include <SPI.h>
 #include <SD.h>
 #include "Adafruit_EPD.h"
@@ -117,8 +116,14 @@ bool internal_extra_error;
 bool external_extra_error;
 bool k1_extra_error;
 
+#define NO_ERROR 0
+#define NO_CONNECTION 1
+#define FAILED_ONCE   2
+#define OUT_OF_BOUNDS 3
+#define WITHIN_BOUNDS 4
+
 uint8_t i;
-uint8_t j;
+uint8_t samples_taken;
 
 //Accelerometer
 Adafruit_LIS3DH accelerometer = Adafruit_LIS3DH();
@@ -182,7 +187,7 @@ void setup() {
   sal_OoB = 0;
 
   i = 0;
-  j = 0;
+  samples_taken = 1;
   k1_sleep();
 }
 
@@ -192,8 +197,7 @@ void loop() {
   blink(PIN_LED_STATUS, 4);
   sd_setup();
   sd_openFiles();
-  //rtc_debug_serial_print();
-
+  
   getDate();
 
   float battN = (drifter_readMainBatteryVoltage() - MIN_BATTERY_VOLTAGE) / (MAX_BATTERY_VOLTAGE - MIN_BATTERY_VOLTAGE);
@@ -205,7 +209,6 @@ void loop() {
   bool needToUpdateEpaper = false;
 
   if (systemErrors.mainBatteryDepleted) {
-
     if (mainBatteryLevelPercent > 0) {
       errorFile.write(currentDateAndTime);
       errorFile.write(" succesfully regained power.\n");
@@ -234,12 +237,13 @@ void loop() {
     } else {
       if (!systemErrors.noSdDetected) {
         temp_handle_measurement();
-        k1_handle_measurement();
-        sd_logError();
-        sd_logData();
+        k1_handle_measurement();        
         epaper_clear();
         epaper_drawSensorData();
+        epaper_drawSensorIcons();
         epaper_drawDayCode();
+        sd_logError();
+        sd_logData();
       }
     }
 
@@ -248,10 +252,9 @@ void loop() {
 
   if (needToUpdateEpaper) epaper_update();
   i++;
-  j++;
+  samples_taken++;
   sd_closeFiles();
   rtc_enterDeepSleep();
-  //delay(60*1000);
 }
 
 void rtc_setup(Timestamp initialTime) {
@@ -375,6 +378,8 @@ void sd_logError() {
       case 4:
         strcat(errorLine, "\tInternal Temperature out of bounds. Trying again ... sample within bounds.\n");
         break;
+      default:
+        break;
     }
 
     if(external_extra_error)
@@ -391,6 +396,8 @@ void sd_logError() {
 
       case 4:
         strcat(errorLine, "\tExternal Temperature out of bounds. Trying again ... sample within bounds.\n");
+        break;
+      default:
         break;
     }
 
@@ -410,6 +417,8 @@ void sd_logError() {
       case 255:
         strcat(errorLine, "\tK1 Probe - Connection not established ... could not be established.\n");
         break;
+      default:
+        break;
     }
 
     if(k1_extra_error)
@@ -422,6 +431,8 @@ void sd_logError() {
       case 2:
         strcat(errorLine, "\tTDS sensor out of bounds. Trying again ... sample out of bounds\n");
         break;
+      default:
+        break;
     }
     switch(ec_OoB){
       case 1:
@@ -430,6 +441,8 @@ void sd_logError() {
       case 2:
         strcat(errorLine, "\tConductivity sensor out of bounds. Trying again ... sample out of bounds\n");
         break;
+      default:
+        break;
     }
     switch(sal_OoB){
       case 1:
@@ -437,6 +450,8 @@ void sd_logError() {
         break;
       case 2:
         strcat(errorLine, "\tSalinity sensor out of bounds. Trying again ... sample out of bounds\n");
+        break;
+      default:
         break;
     }
 
@@ -454,7 +469,6 @@ void sd_logError() {
     for (int i = 0; i < 128; i++) {
       errorLine[i] = '\0';
     }
-
   }
 }
 
@@ -501,22 +515,15 @@ void epaper_drawPowerRecoveryModeIcon() {
   epd.setTextSize(1);
   epd.setCursor(0, 25);
   epd.print("Entered power\nrecovery mode\n");
-  epd.print(rtc.getMonth());
-  epd.print("/");
-  epd.print(rtc.getDay());
-  epd.print(" ");
-  epd.print(rtc.getHours());
-  epd.print(":");
-  epd.print(rtc.getMinutes());
-  epd.print(".");
-  epaper_draw1BitIcon(BATTERY_ICON_BYTES, BATTERY_ICON_WIDTH, BATTERY_ICON_HEIGHT, 91, 13);
+  epd.print(currentDateAndTime);
+  epaper_draw1BitIcon(BATTERY_ICON_BYTES, BATTERY_ICON_WIDTH, BATTERY_ICON_HEIGHT, 121, 13);
 }
 
 void epaper_drawSdCardErrorIcon() {
   epd.setTextSize(1);
   epd.setCursor(0, 25);
   epd.print("No SD card...\n\nPlease insert\nSD.");
-  epaper_draw1BitIcon(NO_SD_ICON_BYTES, NO_SD_ICON_WIDTH, NO_SD_ICON_HEIGHT, 91, 13);
+  epaper_draw1BitIcon(NO_SD_ICON_BYTES, NO_SD_ICON_WIDTH, NO_SD_ICON_HEIGHT, 121, 13);
 }
 
 void epaper_clear() {
@@ -528,7 +535,7 @@ void epaper_update() {
 }
 
 void epaper_drawSensorData() {
-    epd.setCursor(10, 10);
+    epd.setCursor(2, 2);
     epd.setTextSize(1);
     if (systemErrors.drifterInverted) {
       epd.print("Not upright");
@@ -561,17 +568,92 @@ void epaper_drawSensorData() {
       epd.print("%, ");
       epd.print(drifter_readMainBatteryVoltage());
       epd.print("V\n");
-      epd.print(j);
+      epd.print(samples_taken);
       epd.print(" samples taken");
     }
 }
 
-void epaper_drawDayCode() {
-  epd.setTextSize(4);
-  epd.setCursor(80, 10);
-  epd.print("M");
-  epd.setTextSize(1);
+void epaper_drawSensorIcons() {
+  Serial.println("Entered Sensor Icon code.");
+  if(internal_error_code != 0 || external_error_code != 0 || k1ReturnCode != 1 || ec_OoB != 0 || tds_OoB != 0 || sal_OoB != 0){
+    epaper_draw1BitIcon(SENSOR_ICON_BYTES, SENSOR_ICON_WIDTH, SENSOR_ICON_HEIGHT, 121, 0);
+
+    Serial.println("Written Sensor Icon");
+    //set the location to start writing
+    //define offsets IF the epaper doesn't remember the x of the above location
+    
+    int x_dimension = 70;
+    int y_dimension = 95;
+    int offset = 10;
+
+    Serial.println(internal_error_code);
+    Serial.println(external_error_code);
+    Serial.println(k1ReturnCode);
+
+    epd.setCursor(x_dimension, y_dimension);
+  
+    switch(internal_error_code){
+      case NO_ERROR:
+        break;
+      case NO_CONNECTION:
+        epd.print("Int temp sensor disconnected");
+        y_dimension += offset;
+        break;
+      case OUT_OF_BOUNDS:
+        epd.print("Int temp out of bounds");
+        y_dimension += offset; 
+        break;
+      default:
+        break;
+    }
+
+    epd.setCursor(x_dimension, y_dimension);
+    
+    switch(external_error_code){
+      case NO_ERROR:
+        break;
+      case NO_CONNECTION:
+        epd.print("Ext temp sensor disconnected");
+        y_dimension += offset;
+        break;
+      case OUT_OF_BOUNDS:
+        epd.print("Ext temp out of bounds");
+        y_dimension += offset;   
+        break;
+      default:
+        break;
+    }
+
+    epd.setCursor(x_dimension, y_dimension);
+        
+    switch(k1ReturnCode){
+      case 0:
+        epd.print("K1 - Null values");
+        break;
+      case 2:
+        epd.print("K1 - Command Failed");
+        break;
+      case 254:
+        epd.print("K1 - Pending");
+        break;
+      case 255:
+        epd.print("K1 Chip disconnected");
+        break;
+      case 1:
+      case 3:
+      case 256:
+        if(ec_OoB == 1 || tds_OoB == 1 || sal_OoB == 1){
+          epd.print("K1 - out of bounds");
+          //write "K1 Probe disconnected"
+        }
+        break;
+      default:
+        break;
+    }
+  }
 }
+
+void epaper_drawDayCode() {}
 
 void temp_setup() {
   // locate devices on the bus
@@ -640,10 +722,7 @@ void temp_handle_measurement(){
   }
 
   //connection check
-  Serial.println(extTempF);
-
   if(extTempF < -196){
-    Serial.println("made it here");
     temp_readTemperatures();
     Serial.println(external_error_code);
     if(extTempF < -196){
@@ -671,13 +750,14 @@ void temp_handle_measurement(){
         external_error_code = 4;
     }
   }
+  Serial.print("final ext code:");
+  Serial.println(external_error_code);
 }
 
 void accelerometer_setup() {
   if (!accelerometer.begin(I2C_ADDRESS_ACCELEROMETER)) {
     Serial.println("Couldnt start accelerometer");
-  }
-  else {
+  } else {
     accelerometer.setRange(ACCELEROMETER_RANGE);
   }
 }
@@ -703,23 +783,19 @@ void k1_setup() {
 }
 
 void k1_setTempCompensation(){
-
-float tempC = DallasTemperature::toCelsius(extTempF);
-
+  float tempC = DallasTemperature::toCelsius(extTempF);
   
   k1DelayTime = 300;
-  Wire.beginTransmission(K1_ADDRESS);       //call the circuit by its ID number.
-  Wire.write("T,23");
+  Wire.beginTransmission(K1_ADDRESS);
+  Wire.write("T,23");              //insert tempC
   Wire.endTransmission();
   delay(k1DelayTime);
 }
-
 
   //Sets k1 delay to appropriate time and sends read command to k1 circuit.
   //read the return code and retrieve the k1Data.
   //Calls the k1_parse_data function in order to set data into float values.
 void k1_takeMeasurement() {
-
   k1_setTempCompensation();
   
   k1DelayTime = 570;                        //Delay to allow the K1 to take a reading.
@@ -749,29 +825,24 @@ void k1_takeMeasurement() {
   //Takes the k1data and breaks it up into its 4 individual parts. EC|TDS|SAL|SG.
   //Second half
 void k1_parse_data() {
-
   ec = strtok(k1Data, ",");          //let's pars the string at each comma.
   tds = strtok(NULL, ",");            //let's pars the string at each comma.
   sal = strtok(NULL, ",");            //let's pars the string at each comma.
   sg = strtok(NULL, ",");             //let's pars the string at each comma.
 
-  //uncomment this section if you want to take the values and convert them into floating point number.
-
-    ec_float=atof(ec);
-    tds_float=atof(tds);
-    sal_float=atof(sal);
-    sg_float=atof(sg);
-
+  ec_float=atof(ec);
+  tds_float=atof(tds);
+  sal_float=atof(sal);
+  sg_float=atof(sg);
 }
 
   //sets delay to appropriate value and sends a sleep command to the k1 circuit.
 void k1_sleep(){
   k1DelayTime = 250;
 
-  Wire.beginTransmission(K1_ADDRESS);                                            //call the circuit by its ID number.
-  Wire.write(SLEEP_COMMAND);                                                   //transmit the command that was sent through the serial port.
+  Wire.beginTransmission(K1_ADDRESS);                                  
+  Wire.write(SLEEP_COMMAND);                                                  
   Wire.endTransmission();
-
 }
 
   //Sends a command to a k1 that is in sleep mode to wake it up.
@@ -780,13 +851,11 @@ void k1_wake(){
   k1ReturnCode = Wire.read();
 }
 
-
   //Wakes the k1 and takes a measurements,
   //if return code determines a failure then retry. If fails again sets error code and sets k1 to sleep
   //If successful either time, checks the value if it is within bounds.
   //If Out of Bounds retry, if fails again set error code and sets k1 to sleep
 void k1_handle_measurement(){
-
   k1_wake();
   k1_takeMeasurement();
 
@@ -817,12 +886,10 @@ void k1_handle_measurement(){
         }
         else
           k1ReturnCode = 256 ; // worked second try
-        break;                                //exits the switch case.
-    }
-
-  Serial.println(ec_float);
-  Serial.println(tds_float);
-  Serial.println(sal_float);
+        break; 
+      default:
+        break;
+   }
 
   if(k1ReturnCode == 1){
     if(ec_float == 0 && tds_float == 0 && sal_float == 0 ){
