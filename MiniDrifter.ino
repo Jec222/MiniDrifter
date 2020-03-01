@@ -1,3 +1,4 @@
+
 #include <SPI.h>
 #include <SD.h>
 #include "Adafruit_EPD.h"
@@ -701,10 +702,26 @@ void k1_setup() {
   Wire.begin();
 }
 
+void k1_setTempCompensation(){
+
+float tempC = DallasTemperature::toCelsius(extTempF);
+
+  
+  k1DelayTime = 300;
+  Wire.beginTransmission(K1_ADDRESS);       //call the circuit by its ID number.
+  Wire.write("T,23");
+  Wire.endTransmission();
+  delay(k1DelayTime);
+}
+
+
   //Sets k1 delay to appropriate time and sends read command to k1 circuit.
   //read the return code and retrieve the k1Data.
   //Calls the k1_parse_data function in order to set data into float values.
 void k1_takeMeasurement() {
+
+  k1_setTempCompensation();
+  
   k1DelayTime = 570;                        //Delay to allow the K1 to take a reading.
   Wire.beginTransmission(K1_ADDRESS);       //call the circuit by its ID number.
   Wire.write(READ_COMMAND);
@@ -833,12 +850,15 @@ void k1_handle_measurement(){
     if(ec_OoB == 1 || tds_OoB == 1 || sal_OoB == 1 ){
       k1_takeMeasurement();
       if(ec_float < 5 || tds_float > 100000){
+        ec_float = -1;
         ec_OoB = 2;
       }
       if(tds_float < 2 || tds_float > 50000){
+        tds_float = -1;
         tds_OoB = 2;
       }
       if(sal_float < 0 || sal_float > 35){
+        sal_float = -1;
         sal_OoB = 2;
       }
     }
