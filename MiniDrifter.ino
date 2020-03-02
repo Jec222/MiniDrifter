@@ -263,8 +263,13 @@ void rtc_setup(Timestamp initialTime) {
 }
 
 void rtc_enterDeepSleep() {
+  nextAlarmTimeSeconds = nextAlarmTimeSeconds + SAMPLE_INTERVAL_SECONDS;
+  if (nextAlarmTimeSeconds >= 60) {
+    nextAlarmTimeMinutes += 1;
+    nextAlarmTimeSeconds = nextAlarmTimeSeconds % 60;
+  }
   nextAlarmTimeMinutes = (nextAlarmTimeMinutes + SAMPLE_INTERVAL_MINUTES) % 60;
-  nextAlarmTimeSeconds = rtc.getSeconds();
+
 
   rtc.setAlarmSeconds(nextAlarmTimeSeconds);
   rtc.setAlarmMinutes(nextAlarmTimeMinutes);
