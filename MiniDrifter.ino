@@ -11,11 +11,11 @@
 
 #define PIN_LED_RED 13 // Red LED on Pin #13
 #define PIN_LED_GREEN 8 // Green LED on Pin #8
-#define PIN_LED_STATUS 11
+#define PIN_LED_STATUS 13
 #define PIN_VOLTAGE_BATT 14    // Main Battery Voltage on Pin A0 (14 ide)
 #define PIN_VOLTAGE_BATT_CIRC_ENABLE 11 //Enable pin for batt reading circuit
-#define SAMPLE_INTERVAL_SECONDS 0 // RTC - Sample interval in seconds
-#define SAMPLE_INTERVAL_MINUTES 1
+#define SAMPLE_INTERVAL_SECONDS 10 // RTC - Sample interval in seconds
+#define SAMPLE_INTERVAL_MINUTES 0
 
 #define PIN_VOLTAGE_BATT_BACKUP A7    // Battery Voltage on Pin A7
 
