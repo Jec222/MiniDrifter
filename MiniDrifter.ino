@@ -65,6 +65,7 @@ const int LOG_DATA_STRING_SIZE = (LOG_DECIMAL_PRECISION * 5) + TIMESTAMP_SIZE + 
 char logLine[LOG_DATA_STRING_SIZE] = "";
 char errorLine[750] = ""; // so 1024 is definitely just for now but man, I feel like for our scope, the whole calculation for log_data_string_size is overkill
                           //it does lend well to extension so i guess its alright
+char tempComp[8] = "";
 
 #define ERROR_MESSAGE_DRIFTER_INVERTED "Drifter was inverted, samples weren't taken."
 #define ERROR_MESSAGE_NO_SD "No sd card was detected, couldn't log measurements."
@@ -86,6 +87,7 @@ const char errorFileName[15] = "/ERRORS.TXT";
 
 #define READ_COMMAND "R"
 #define SLEEP_COMMAND "sleep"
+#define TEMP_COMPENSATION "T,"
 
 //K1.0 stuff
 #define K1_ADDRESS 100              //default I2C ID number for EZO EC Circuit.
@@ -790,9 +792,15 @@ void k1_setup() {
 void k1_setTempCompensation(){
   float tempC = DallasTemperature::toCelsius(extTempF);
   
+  //tempComp
+  sprintf(tempComp,"%s,%f",TEMP_COMPENSATION, tempC);
+
+  Serial.print("tempComp: ");
+  Serial.println(tempComp);
+  
   k1DelayTime = 300;
   Wire.beginTransmission(K1_ADDRESS);
-  Wire.write("T,23");              //insert tempC
+  Wire.write(tempComp);              //insert tempC
   Wire.endTransmission();
   delay(k1DelayTime);
 }
