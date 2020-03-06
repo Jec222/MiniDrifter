@@ -67,6 +67,7 @@ char errorLine[750] = ""; // so 1024 is definitely just for now but man, I feel 
                           //it does lend well to extension so i guess its alright
 char tempComp[8] = "";
 
+
 #define ERROR_MESSAGE_DRIFTER_INVERTED "Drifter was inverted, samples weren't taken."
 #define ERROR_MESSAGE_NO_SD "No sd card was detected, couldn't log measurements."
 
@@ -87,7 +88,7 @@ const char errorFileName[15] = "/ERRORS.TXT";
 
 #define READ_COMMAND "R"
 #define SLEEP_COMMAND "sleep"
-#define TEMP_COMPENSATION "T,"
+#define TEMP_COMPENSATION "T"
 
 //K1.0 stuff
 #define K1_ADDRESS 100              //default I2C ID number for EZO EC Circuit.
@@ -157,7 +158,7 @@ void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
   delay(10000);
-  Serial.println("\nMini Drifter version 0.95");
+  Serial.println("\nMini Drifter version 1.0");
 
   pinMode(PIN_LED_RED, OUTPUT);
   pinMode(PIN_LED_GREEN, OUTPUT);
@@ -208,8 +209,8 @@ void loop() {
   if (battN < 0) {
     battN = 0;
   }
+  Serial.println(battN);
   mainBatteryLevelPercent = (battN) * 100.0;
-
   bool needToUpdateEpaper = false;
 
   if (systemErrors.mainBatteryDepleted) {
@@ -583,21 +584,12 @@ void epaper_drawSensorData() {
 }
 
 void epaper_drawSensorIcons() {
-  Serial.println("Entered Sensor Icon code.");
   if(internal_error_code != 0 || external_error_code != 0 || k1ReturnCode != 1 || ec_OoB != 0 || tds_OoB != 0 || sal_OoB != 0){
     epaper_draw1BitIcon(SENSOR_ICON_BYTES, SENSOR_ICON_WIDTH, SENSOR_ICON_HEIGHT, 121, 0);
-
-    Serial.println("Written Sensor Icon");
-    //set the location to start writing
-    //define offsets IF the epaper doesn't remember the x of the above location
     
     int x_dimension = 70;
     int y_dimension = 95;
     int offset = 10;
-
-    Serial.println(internal_error_code);
-    Serial.println(external_error_code);
-    Serial.println(k1ReturnCode);
 
     epd.setCursor(x_dimension, y_dimension);
   
@@ -668,10 +660,7 @@ void temp_setup() {
   // locate devices on the bus
   sensors.begin();
 
-  // report parasite power requirements
-  Serial.print("Parasite power is: ");
-  if (sensors.isParasitePowerMode()) Serial.println("ON");
-  else Serial.println("OFF");
+  //parasite power is off
 
   // set the resolution to 9 bit (Each Dallas/Maxim device is capable of several different resolutions)
   sensors.setResolution(internalThermometer, 9);
@@ -733,18 +722,14 @@ void temp_handle_measurement(){
   //connection check
   if(extTempF < -196){
     temp_readTemperatures();
-    Serial.println(external_error_code);
     if(extTempF < -196){
-      Serial.println("made it here too");
       external_error_code = 1;
-      Serial.println(external_error_code);
       extTempF = -1;
     }
     else
       external_error_code = 2;
   }
 
-  Serial.println(external_error_code);
   //Bounds check
   if(external_error_code == 0 || external_error_code == 2){
     if(external_error_code == 2)
@@ -759,8 +744,6 @@ void temp_handle_measurement(){
         external_error_code = 4;
     }
   }
-  Serial.print("final ext code:");
-  Serial.println(external_error_code);
 }
 
 void accelerometer_setup() {
@@ -775,12 +758,8 @@ AccelerometerReading accelerometer_read() {
   sensors_event_t event;
   accelerometer.getEvent(&event);
 
-   /* Display the results (acceleration is measured in m/s^2) */
-  Serial.print("\t\tX: "); Serial.print(event.acceleration.x);
-  Serial.print(" \tY: "); Serial.print(event.acceleration.y);
   Serial.print(" \tZ: "); Serial.print(event.acceleration.z);
   Serial.println(" m/s^2 ");
-
   Serial.println();
   AccelerometerReading reading = {event.acceleration.x, event.acceleration.y, event.acceleration.z};
 
@@ -794,25 +773,28 @@ void k1_setup() {
 void k1_setTempCompensation(){
   float tempC = DallasTemperature::toCelsius(extTempF);
   
-  //tempComp
-  sprintf(tempComp,"%s,%f",TEMP_COMPENSATION, tempC);
-
-  Serial.print("tempComp: ");
-  Serial.println(tempComp);
+  sprintf(tempComp,"%s,%.1f",TEMP_COMPENSATION, tempC);
   
   k1DelayTime = 300;
   Wire.beginTransmission(K1_ADDRESS);
   Wire.write(tempComp);              //insert tempC
   Wire.endTransmission();
   delay(k1DelayTime);
+
+  for (int i = 0; i < 10; i++) {
+    tempComp[i] = '\0';
+  }
+  
 }
 
   //Sets k1 delay to appropriate time and sends read command to k1 circuit.
   //read the return code and retrieve the k1Data.
   //Calls the k1_parse_data function in order to set data into float values.
 void k1_takeMeasurement() {
-  k1_setTempCompensation();
-  
+  if(external_error_code == NO_ERROR){
+    k1_setTempCompensation();
+  }
+
   k1DelayTime = 570;                        //Delay to allow the K1 to take a reading.
   Wire.beginTransmission(K1_ADDRESS);       //call the circuit by its ID number.
   Wire.write(READ_COMMAND);
@@ -955,6 +937,7 @@ float drifter_readMainBatteryVoltage() {
   digitalWrite(PIN_VOLTAGE_BATT_CIRC_ENABLE, HIGH);
   delay(100);
   const float vPin = (analogRead(PIN_VOLTAGE_BATT) / 1023.0) * 3.3;
+  delay(100);
   digitalWrite(PIN_VOLTAGE_BATT_CIRC_ENABLE, LOW);
   const float dividerFraction = 3300.0 / (3300.0 + 910.0);
   const float vBatt = (vPin / dividerFraction);
