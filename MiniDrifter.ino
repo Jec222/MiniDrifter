@@ -11,7 +11,7 @@
 
 #define PIN_LED_RED 13 // Red LED on Pin #13
 #define PIN_LED_GREEN 8 // Green LED on Pin #8
-#define PIN_LED_STATUS 13
+#define PIN_LED_STATUS 8
 #define PIN_VOLTAGE_BATT 14    // Main Battery Voltage on Pin A0 (14 ide)
 #define PIN_VOLTAGE_BATT_CIRC_ENABLE 11 //Enable pin for batt reading circuit
 #define SAMPLE_INTERVAL_SECONDS 10 // RTC - Sample interval in seconds
@@ -163,6 +163,8 @@ void setup() {
   pinMode(PIN_LED_GREEN, OUTPUT);
   pinMode(PIN_LED_STATUS, OUTPUT);
   pinMode(PIN_VOLTAGE_BATT_CIRC_ENABLE, OUTPUT);
+  
+  digitalWrite(PIN_VOLTAGE_BATT_CIRC_ENABLE, LOW);
 
   Timestamp initialTime;
   initialTime.hours = HOURS;
