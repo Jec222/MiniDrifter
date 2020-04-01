@@ -14,19 +14,29 @@
 #define PIN_LED_STATUS 8
 #define PIN_VOLTAGE_BATT 14    // Main Battery Voltage on Pin A0 (14 ide)
 #define PIN_VOLTAGE_BATT_CIRC_ENABLE 11 //Enable pin for batt reading circuit
-#define SAMPLE_INTERVAL_SECONDS 10 // RTC - Sample interval in seconds
-#define SAMPLE_INTERVAL_MINUTES 0
+#define SAMPLE_INTERVAL_SECONDS 0 // RTC - Sample interval in seconds
+#define SAMPLE_INTERVAL_MINUTES 30
 
 #define PIN_VOLTAGE_BATT_BACKUP A7    // Battery Voltage on Pin A7
 
+enum DaysOfWeek {
+  SUNDAY,
+  MONDAY,
+  TUESDAY,
+  WEDNESDAY,
+  THURSDAY,
+  FRIDAY,
+  SATURDAY
+};
+
 // Time info for RTC
-const byte HOURS = 13;
-const byte MINUTES = 0;
+const byte HOURS = 12;
+const byte MINUTES = 45;
 const byte SECONDS = 0;
 
 // Date info for RTC
-const byte DAY = 26;
-const byte MONTH = 2;
+const byte DAY = 13;
+const byte MONTH = 3;
 const byte YEAR = 20;
 
 typedef struct Timestamp {
@@ -61,11 +71,12 @@ File errorFile;
 const int LOG_DECIMAL_PRECISION = 8;
 const int NUM_SAMPLES = 5;
 const int TIMESTAMP_SIZE = 8 + strlen("-XX::XX");
-const int LOG_DATA_STRING_SIZE = (LOG_DECIMAL_PRECISION * 5) + TIMESTAMP_SIZE + NUM_SAMPLES + 4;
+const int LOG_DATA_STRING_SIZE = (LOG_DECIMAL_PRECISION * 5) + TIMESTAMP_SIZE + NUM_SAMPLES + 8;
 char logLine[LOG_DATA_STRING_SIZE] = "";
 char errorLine[750] = ""; // so 1024 is definitely just for now but man, I feel like for our scope, the whole calculation for log_data_string_size is overkill
                           //it does lend well to extension so i guess its alright
-char tempComp[8] = "";
+const int TEMP_COMP_LENGTH = 8;
+char tempComp[TEMP_COMP_LENGTH] = "";
 
 
 #define ERROR_MESSAGE_DRIFTER_INVERTED "Drifter was inverted, samples weren't taken."
@@ -242,19 +253,23 @@ void loop() {
     } else {
       if (!systemErrors.noSdDetected) {
         temp_handle_measurement();
-        k1_handle_measurement();        
+        k1_handle_measurement();  
         epaper_clear();
         epaper_drawSensorData();
-        epaper_drawSensorIcons();
-        epaper_drawDayCode();
+        if (internal_error_code != 0 || external_error_code != 0 || k1ReturnCode != 1 || ec_OoB != 0 || tds_OoB != 0 || sal_OoB != 0) {
+          epaper_drawSensorIcons();
+        } else {
+          epaper_drawDayCode();
+        }
         sd_logError();
         sd_logData();
+        needToUpdateEpaper = true;
       }
     }
 
     drifter_handleSystemErrors();
   }
-
+  Serial.println(needToUpdateEpaper);
   if (needToUpdateEpaper) epaper_update();
   i++;
   samples_taken++;
@@ -358,7 +373,7 @@ void sd_closeFiles() {
 }
 
 void sd_logData() {
-  sprintf(logLine, "%s,%.2f,%.2f,%.2f,%.2f,%.2f,%d\n", currentDateAndTime, intTempF, extTempF, tds_float, sal_float, ec_float, mainBatteryLevelPercent);
+  sprintf(logLine, "%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n", currentDateAndTime, intTempF, extTempF, tds_float, sal_float, ec_float, drifter_readMainBatteryVoltage());
   logFile.write(logLine);
   for (int i = 0; i < LOG_DATA_STRING_SIZE; i++) {
     logLine[i] = '\0';
@@ -584,7 +599,6 @@ void epaper_drawSensorData() {
 }
 
 void epaper_drawSensorIcons() {
-  if(internal_error_code != 0 || external_error_code != 0 || k1ReturnCode != 1 || ec_OoB != 0 || tds_OoB != 0 || sal_OoB != 0){
     epaper_draw1BitIcon(SENSOR_ICON_BYTES, SENSOR_ICON_WIDTH, SENSOR_ICON_HEIGHT, 121, 0);
     
     int x_dimension = 70;
@@ -651,10 +665,40 @@ void epaper_drawSensorIcons() {
       default:
         break;
     }
-  }
 }
 
-void epaper_drawDayCode() {}
+void epaper_drawDayCode() {
+  const int dayOfWeek = drifter_getDayOfWeek(rtc.getYear(), rtc.getMonth(), rtc.getDay());
+
+  Serial.print("day of week = ");
+  Serial.println(dayOfWeek);
+  
+  switch(dayOfWeek) {
+    case SUNDAY:
+      epaper_draw1BitIcon(SUNDAY_ICON_BYTES, SUNDAY_ICON_WIDTH, SUNDAY_ICON_HEIGHT, 105, 9);
+    break;
+    case MONDAY:
+      epaper_draw1BitIcon(MONDAY_ICON_BYTES, MONDAY_ICON_WIDTH, MONDAY_ICON_HEIGHT, 105, 9);
+    break;
+    case TUESDAY:
+      epaper_draw1BitIcon(TUESDAY_ICON_BYTES, TUESDAY_ICON_WIDTH, TUESDAY_ICON_HEIGHT, 105, 9);
+    break;
+    case WEDNESDAY:
+      epaper_draw1BitIcon(WEDNESDAY_ICON_BYTES, WEDNESDAY_ICON_WIDTH, WEDNESDAY_ICON_HEIGHT, 105, 9);
+    break;
+    case THURSDAY:
+      epaper_draw1BitIcon(THURSDAY_ICON_BYTES, THURSDAY_ICON_WIDTH, THURSDAY_ICON_HEIGHT, 105, 9);
+    break;
+    case FRIDAY:
+      epaper_draw1BitIcon(FRIDAY_ICON_BYTES, FRIDAY_ICON_WIDTH, FRIDAY_ICON_HEIGHT, 105, 9);
+    break;
+    case SATURDAY:
+      epaper_draw1BitIcon(SATURDAY_ICON_BYTES, SATURDAY_ICON_WIDTH, SATURDAY_ICON_HEIGHT, 105, 9);
+    break;
+    default:
+    break;
+  }
+}
 
 void temp_setup() {
   // locate devices on the bus
@@ -781,7 +825,7 @@ void k1_setTempCompensation(){
   Wire.endTransmission();
   delay(k1DelayTime);
 
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i < TEMP_COMP_LENGTH; i++) {
     tempComp[i] = '\0';
   }
   
@@ -942,4 +986,14 @@ float drifter_readMainBatteryVoltage() {
   const float dividerFraction = 3300.0 / (3300.0 + 910.0);
   const float vBatt = (vPin / dividerFraction);
   return vBatt;
+}
+
+int drifter_getDayOfWeek (int year, int month, int day)
+{
+  int adjustment, mm, yy;
+  if (year < 2000) year += 2000;
+  adjustment = (14 - month) / 12;
+  mm = month + 12 * adjustment - 2;
+  yy = year - adjustment;
+  return (day + ((13 * mm - 1) / 5) + yy + (yy / 4) - (yy / 100) + (yy / 400)) % 7;
 }
