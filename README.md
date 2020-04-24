@@ -1,10 +1,14 @@
-[toc]
+
 
 # Mini Drifter
 
+
+
+![Alt text](https://github.com/stberryhill/MiniDrifter/blob/master/Drifter-Pics.png)
+
+
+
 Code and 3d print files for our Senior Design project. The mini drifter is a solar powered smart buoy designed to survive a year with minimal maintenence. It's housing is a modified pelican 1060 case, with a 3d-printed sensor guard epoxied to the bottom.
-
-
 
 ## Code conventions
 ### Function prefixes
