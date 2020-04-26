@@ -94,6 +94,9 @@ struct SystemErrors systemErrors = {false, false, false};
 #define MIN_BATTERY_VOLTAGE 3.0
 int mainBatteryLevelPercent;
 
+#define LOW_TEMP_BOUND  30
+#define HIGH_TEMP_BOUND 200
+
 const char logFileName[15] = "/DATA.CSV";
 const char errorFileName[15] = "/ERRORS.TXT";
 
@@ -129,6 +132,7 @@ int sal_OoB;
 bool internal_extra_error;
 bool external_extra_error;
 bool k1_extra_error;
+
 
 #define NO_ERROR 0
 #define NO_CONNECTION 1
@@ -737,6 +741,8 @@ void temp_readTemperatures() {
 void temp_handle_measurement(){
   temp_readTemperatures();
 
+
+
   //connection check
   if(intTempF < -196){
     temp_readTemperatures();
@@ -752,9 +758,9 @@ void temp_handle_measurement(){
   if(internal_error_code == 0 || internal_error_code == 2){
     if(internal_error_code == 2)
       internal_extra_error = true;
-    if(intTempF < 41 || intTempF > 122){
+    if(intTempF < LOW_TEMP_BOUND || intTempF > HIGH_TEMP_BOUND){
       temp_readTemperatures();
-      if(intTempF < 41 || intTempF > 122){
+      if(intTempF < LOW_TEMP_BOUND || intTempF > HIGH_TEMP_BOUND){
         intTempF = -1;
         internal_error_code = 3;
       }
@@ -778,9 +784,9 @@ void temp_handle_measurement(){
   if(external_error_code == 0 || external_error_code == 2){
     if(external_error_code == 2)
       external_extra_error = true;
-    if(extTempF < 41 || extTempF > 122){
+    if(extTempF < LOW_TEMP_BOUND || extTempF > HIGH_TEMP_BOUND){
       temp_readTemperatures();
-      if(extTempF < 41 || extTempF > 122){
+      if(extTempF < LOW_TEMP_BOUND || extTempF > HIGH_TEMP_BOUND){
         extTempF = -1;
         external_error_code = 3;
       }
